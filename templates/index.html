@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Excel Converter</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* Animated background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(ellipse at 30% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+                        radial-gradient(ellipse at 70% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%);
+            animation: bgShift 15s ease-in-out infinite alternate;
+            z-index: -1;
+        }
+
+        @keyframes bgShift {
+            0% { transform: translate(0, 0) rotate(0deg); }
+            100% { transform: translate(-5%, -3%) rotate(3deg); }
+        }
+
+        .container {
+            width: 100%;
+            max-width: 560px;
+            padding: 0 24px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .logo {
+            font-size: 48px;
+            margin-bottom: 16px;
+            filter: drop-shadow(0 0 20px rgba(59, 130, 246, 0.4));
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+        }
+
+        /* Drop zone */
+        .drop-zone {
+            border: 2px dashed rgba(59, 130, 246, 0.3);
+            border-radius: 16px;
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(10px);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(139, 92, 246, 0.05));
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: rgba(59, 130, 246, 0.6);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(59, 130, 246, 0.15);
+        }
+
+        .drop-zone:hover::before,
+        .drop-zone.dragover::before {
+            opacity: 1;
+        }
+
+        .drop-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.8;
+        }
+
+        .drop-text {
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: #d1d5db;
+        }
+
+        .drop-hint {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        /* Supported formats */
+        .formats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 24px;
+        }
+
+        .format-tag {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            background: rgba(59, 130, 246, 0.1);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        /* Progress / Status */
+        .status {
+            margin-top: 24px;
+            text-align: center;
+            min-height: 60px;
+        }
+
+        .status.hidden {
+            display: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 32px;
+            height: 32px;
+            border: 3px solid rgba(59, 130, 246, 0.2);
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .status-text {
+            font-size: 14px;
+            color: #9ca3af;
+        }
+
+        /* Result card */
+        .result {
+            margin-top: 24px;
+            padding: 20px;
+            border-radius: 12px;
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            animation: fadeIn 0.4s ease;
+        }
+
+        .result.hidden {
+            display: none;
+        }
+
+        .result.error {
+            background: rgba(239, 68, 68, 0.08);
+            border-color: rgba(239, 68, 68, 0.2);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .result-icon {
+            font-size: 20px;
+        }
+
+        .result-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #10b981;
+        }
+
+        .result.error .result-title {
+            color: #ef4444;
+        }
+
+        .result-stats {
+            font-size: 13px;
+            color: #9ca3af;
+            line-height: 1.6;
+        }
+
+        .result-stats span {
+            color: #d1d5db;
+            font-weight: 500;
+        }
+
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
+        }
+
+        .error-text {
+            color: #f87171;
+            font-size: 13px;
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 11px;
+            color: #4b5563;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">⚡</div>
+            <h1>Universal Excel Converter</h1>
+            <p class="subtitle">DROP ANY FILE — GET EXCEL</p>
+        </div>
+
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-icon">📄</div>
+            <div class="drop-text">Drop your file here or click to browse</div>
+            <div class="drop-hint">Supports EDI 834, FLX, CSV, TSV, pipe-delimited, fixed-width, and more</div>
+            <input type="file" class="file-input" id="fileInput">
+        </div>
+
+        <div class="formats">
+            <span class="format-tag">EDI 834</span>
+            <span class="format-tag">FLX</span>
+            <span class="format-tag">CSV</span>
+            <span class="format-tag">TSV</span>
+            <span class="format-tag">PIPE</span>
+            <span class="format-tag">FIXED-WIDTH</span>
+            <span class="format-tag">GZIP</span>
+        </div>
+
+        <div class="status hidden" id="status">
+            <div class="spinner"></div>
+            <div class="status-text">Converting...</div>
+        </div>
+
+        <div class="result hidden" id="result"></div>
+
+        <div class="footer">
+            Quantify Specialty Care &mdash; Data Team
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const status = document.getElementById('status');
+        const result = document.getElementById('result');
+
+        // Drag & drop
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        async function handleFile(file) {
+            // Show loading
+            status.classList.remove('hidden');
+            result.classList.add('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/convert', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                status.classList.add('hidden');
+
+                if (data.success) {
+                    let statsHtml = `
+                        <div class="result-header">
+                            <span class="result-icon">✅</span>
+                            <span class="result-title">Conversion Complete</span>
+                        </div>
+                        <div class="result-stats">
+                            Format detected: <span>${data.stats.format}</span><br>
+                            Rows: <span>${data.stats.rows?.toLocaleString() || 'N/A'}</span><br>
+                            Columns: <span>${data.stats.columns || 'N/A'}</span>
+                        </div>
+                        <a class="download-btn" href="/download/${encodeURIComponent(data.filename)}">
+                            ⬇️ Download ${data.filename}
+                        </a>
+                    `;
+                    result.innerHTML = statsHtml;
+                    result.classList.remove('hidden', 'error');
+                } else {
+                    result.innerHTML = `
+                        <div class="result-header">
+                            <span class="result-icon">❌</span>
+                            <span class="result-title">Conversion Failed</span>
+                        </div>
+                        <p class="error-text">${data.error}</p>
+                    `;
+                    result.classList.remove('hidden');
+                    result.classList.add('error');
+                }
+
+            } catch (err) {
+                status.classList.add('hidden');
+                result.innerHTML = `
+                    <div class="result-header">
+                        <span class="result-icon">❌</span>
+                        <span class="result-title">Network Error</span>
+                    </div>
+                    <p class="error-text">Failed to connect to the server. Make sure the app is running.</p>
+                `;
+                result.classList.remove('hidden');
+                result.classList.add('error');
+            }
+
+            // Reset file input
+            fileInput.value = '';
+        }
+    </script>
+</body>
+</html>
