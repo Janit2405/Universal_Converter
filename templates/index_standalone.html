@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Excel Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(ellipse at 30% 20%, rgba(59,130,246,0.08) 0%, transparent 50%),
+                        radial-gradient(ellipse at 70% 80%, rgba(139,92,246,0.06) 0%, transparent 50%);
+            animation: bgShift 15s ease-in-out infinite alternate;
+            z-index: -1;
+        }
+
+        @keyframes bgShift {
+            0% { transform: translate(0,0) rotate(0deg); }
+            100% { transform: translate(-5%,-3%) rotate(3deg); }
+        }
+
+        .container { width: 100%; max-width: 560px; padding: 0 24px; }
+
+        .header { text-align: center; margin-bottom: 40px; }
+
+        .logo {
+            font-size: 48px; margin-bottom: 16px;
+            filter: drop-shadow(0 0 20px rgba(59,130,246,0.4));
+        }
+
+        h1 {
+            font-size: 28px; font-weight: 700;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text; margin-bottom: 8px;
+        }
+
+        .subtitle { color: #6b7280; font-size: 14px; letter-spacing: 0.5px; }
+
+        .drop-zone {
+            border: 2px dashed rgba(59,130,246,0.3);
+            border-radius: 16px; padding: 48px 24px;
+            text-align: center; cursor: pointer;
+            transition: all 0.3s ease;
+            background: rgba(255,255,255,0.02);
+            backdrop-filter: blur(10px);
+            position: relative; overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: ''; position: absolute; inset: 0;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(59,130,246,0.05), rgba(139,92,246,0.05));
+            opacity: 0; transition: opacity 0.3s ease;
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: rgba(59,130,246,0.6);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(59,130,246,0.15);
+        }
+
+        .drop-zone:hover::before, .drop-zone.dragover::before { opacity: 1; }
+
+        .drop-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.8; }
+        .drop-text { font-size: 16px; font-weight: 500; margin-bottom: 8px; color: #d1d5db; }
+        .drop-hint { font-size: 12px; color: #6b7280; }
+        .file-input { display: none; }
+
+        .formats {
+            display: flex; flex-wrap: wrap; gap: 8px;
+            justify-content: center; margin-top: 24px;
+        }
+
+        .format-tag {
+            padding: 4px 12px; border-radius: 20px;
+            font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+            background: rgba(59,130,246,0.1); color: #60a5fa;
+            border: 1px solid rgba(59,130,246,0.2);
+        }
+
+        .status { margin-top: 24px; text-align: center; min-height: 60px; }
+        .status.hidden { display: none; }
+
+        .spinner {
+            display: inline-block; width: 32px; height: 32px;
+            border: 3px solid rgba(59,130,246,0.2);
+            border-top-color: #3b82f6; border-radius: 50%;
+            animation: spin 0.8s linear infinite; margin-bottom: 12px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .status-text { font-size: 14px; color: #9ca3af; }
+
+        .result {
+            margin-top: 24px; padding: 20px; border-radius: 12px;
+            background: rgba(16,185,129,0.08);
+            border: 1px solid rgba(16,185,129,0.2);
+            animation: fadeIn 0.4s ease;
+        }
+
+        .result.hidden { display: none; }
+
+        .result.error {
+            background: rgba(239,68,68,0.08);
+            border-color: rgba(239,68,68,0.2);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+        .result-icon { font-size: 20px; }
+        .result-title { font-size: 14px; font-weight: 600; color: #10b981; }
+        .result.error .result-title { color: #ef4444; }
+
+        .result-stats { font-size: 13px; color: #9ca3af; line-height: 1.6; }
+        .result-stats span { color: #d1d5db; font-weight: 500; }
+
+        .download-btn {
+            display: inline-flex; align-items: center; gap: 8px;
+            margin-top: 16px; padding: 10px 24px; border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            color: white; font-size: 14px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(59,130,246,0.4);
+        }
+
+        .error-text { color: #f87171; font-size: 13px; }
+
+        .footer {
+            margin-top: 40px; text-align: center;
+            font-size: 11px; color: #4b5563;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">&#9889;</div>
+            <h1>Universal Excel Converter</h1>
+            <p class="subtitle">DROP ANY FILE &mdash; GET EXCEL</p>
+        </div>
+
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-icon">&#128196;</div>
+            <div class="drop-text">Drop your file here or click to browse</div>
+            <div class="drop-hint">Supports EDI 834, FLX, CSV, TSV, pipe-delimited, fixed-width, and more</div>
+            <input type="file" class="file-input" id="fileInput">
+        </div>
+
+        <div class="formats">
+            <span class="format-tag">EDI 834</span>
+            <span class="format-tag">FLX</span>
+            <span class="format-tag">CSV</span>
+            <span class="format-tag">TSV</span>
+            <span class="format-tag">PIPE</span>
+            <span class="format-tag">FIXED-WIDTH</span>
+            <span class="format-tag">GZIP</span>
+        </div>
+
+        <div class="status hidden" id="status">
+            <div class="spinner"></div>
+            <div class="status-text">Converting...</div>
+        </div>
+
+        <div class="result hidden" id="result"></div>
+
+        <div class="footer">Quantify Specialty Care &mdash; Data Team</div>
+    </div>
+
+    <script>
+    // ─── FORMAT DETECTION ─────────────────────────────────────────────
+    function detectFormat(text, filename) {
+        const fname = filename.toLowerCase();
+        if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) return 'excel';
+        if (fname.endsWith('.csv')) return 'csv';
+        if (fname.endsWith('.tsv')) return 'tsv';
+
+        const lines = text.trim().split('\n');
+
+        // EDI 834
+        if (text.trim().startsWith('ISA') && text.slice(0, 500).includes('~')) return 'edi_834';
+
+        // FLX
+        if (fname.includes('flx')) return 'flx';
+
+        // Pipe-delimited
+        if (lines.length > 1) {
+            const pipeCounts = lines.slice(0, 10).map(l => (l.match(/\|/g) || []).length);
+            if (pipeCounts.every(c => c > 2)) return 'pipe';
+        }
+
+        // Tab-delimited
+        if (lines.length > 1) {
+            const tabCounts = lines.slice(0, 10).map(l => (l.match(/\t/g) || []).length);
+            if (tabCounts.every(c => c > 0)) return 'tab';
+        }
+
+        // Fixed-width: consistent long lines, few delimiters
+        if (lines.length > 5) {
+            const lengths = lines.slice(0, 20).map(l => l.length);
+            const uniqueLengths = new Set(lengths);
+            if (uniqueLengths.size <= 2 && lengths[0] > 100) {
+                const sample = lines.slice(0, 5).join('\n');
+                const pipeC = (sample.match(/\|/g) || []).length;
+                const commaC = (sample.match(/,/g) || []).length;
+                const tabC = (sample.match(/\t/g) || []).length;
+                if (Math.max(pipeC, commaC, tabC) < lines.slice(0, 5).length * 2) return 'fixed_width';
+            }
+        }
+
+        // CSV fallback
+        if (lines.length > 1) {
+            const commaCounts = lines.slice(0, 10).map(l => (l.match(/,/g) || []).length);
+            if (commaCounts.every(c => c > 0)) return 'csv';
+        }
+
+        return 'unknown';
+    }
+
+    // ─── EDI DATE FORMATTER ───────────────────────────────────────────
+    function formatEdiDate(s) {
+        if (!s) return '';
+        s = s.replace('D8', '').trim();
+        if (s.length === 8 && /^\d+$/.test(s)) {
+            return s.slice(4, 6) + '/' + s.slice(6, 8) + '/' + s.slice(0, 4);
+        }
+        return s;
+    }
+
+    // ─── EDI 834 PARSER ──────────────────────────────────────────────
+    function parseEdi834(text) {
+        const segments = text.split('~').map(s => s.trim()).filter(Boolean);
+        const records = [];
+        let current = {};
+        let inMember = false;
+
+        for (const seg of segments) {
+            const el = seg.split('*');
+            const id = el[0].trim();
+
+            if (id === 'INS') {
+                if (inMember && Object.keys(current).length) records.push({...current});
+                current = {};
+                inMember = true;
+                current.Subscriber_Indicator = el[1] || '';
+                current.Relationship_Code = el[2] || '';
+                current.Maintenance_Type = el[3] || '';
+                current.Maintenance_Reason = el[4] || '';
+                current.Benefit_Status = el[5] || '';
+                if (el.length > 8) current.Employment_Status = el[8] || '';
+            } else if (id === 'REF') {
+                const q = el[1] || '', v = el[2] || '';
+                if (q === '0F') current.Subscriber_ID = v;
+                else if (q === '1L') current.Group_Number = v;
+                else if (q === '23') current.Client_Number = v;
+                else if (q === 'ZZ') current.Mutually_Defined_ID = v;
+                else current['REF_' + q] = v;
+            } else if (id === 'DTP') {
+                const q = el[1] || '', d = formatEdiDate(el[3] || '');
+                const map = {'336':'Employment_Date','348':'Benefit_Begin_Date','349':'Benefit_End_Date',
+                             '303':'Eligibility_Begin_Date','304':'Eligibility_End_Date',
+                             '473':'Coverage_Begin_Date','474':'Coverage_End_Date'};
+                current[map[q] || 'Date_' + q] = d;
+            } else if (id === 'NM1') {
+                const ec = el[1] || '';
+                if (ec === 'IL') {
+                    current.Last_Name = el[3] || '';
+                    current.First_Name = el[4] || '';
+                    current.Middle_Name = el[5] || '';
+                    if (el.length > 7) current.Name_Suffix = el[7] || '';
+                    if (el.length > 9) current.SSN_or_ID = el[9] || '';
+                } else if (ec === 'P5') current.Sponsor_Name = el[3] || '';
+                else if (ec === 'IN') current.Payer_Name = el[3] || '';
+            } else if (id === 'PER') {
+                if ((el[1] || '') === 'IP') {
+                    for (let i = 3; i < el.length - 1; i += 2) {
+                        const qual = el[i], val = el[i + 1] || '';
+                        if (qual === 'HP') current.Home_Phone = val;
+                        else if (qual === 'WP') current.Work_Phone = val;
+                        else if (qual === 'TE') current.Phone = val;
+                        else if (qual === 'EM') current.Email = val;
+                    }
+                }
+            } else if (id === 'N3') {
+                current.Address_Line1 = el[1] || '';
+                current.Address_Line2 = el[2] || '';
+            } else if (id === 'N4') {
+                current.City = el[1] || '';
+                current.State = el[2] || '';
+                current.Zip = el[3] || '';
+                current.Country = el[4] || '';
+            } else if (id === 'DMG') {
+                current.DOB = formatEdiDate(el[2] || '');
+                current.Gender = el[3] || '';
+            } else if (id === 'HD') {
+                current.Insurance_Line = el[3] || '';
+                current.Plan_Coverage = el[4] || '';
+                current.Coverage_Level = el[5] || '';
+            } else if (id === 'ICM') {
+                current.Frequency = el[1] || '';
+                current.Wage_Amount = el[2] || '';
+            }
+        }
+        if (inMember && Object.keys(current).length) records.push({...current});
+        if (!records.length) throw new Error('No member records found in EDI 834 file');
+        return records;
+    }
+
+    // ─── FLX PARSER ──────────────────────────────────────────────────
+    const FLX_LAYOUT = [
+        ['Record_Type',0,1],['Claim_Type',1,2],['Subscriber_SSN',2,11],
+        ['Member_ID',11,13],['Patient_Last_Name',13,28],['Patient_First_Name',28,40],
+        ['Patient_MI',40,41],['Patient_DOB',41,49],['Patient_Sex',49,50],
+        ['Patient_Relationship',50,52],['Subscriber_Last_Name',52,67],
+        ['Subscriber_First_Name',67,79],['Patient_Address1',79,109],
+        ['Patient_Address2',109,139],['Patient_City',139,159],
+        ['Patient_State',159,161],['Patient_Zip',161,170],
+        ['Group_Number',170,178],['Group_Name',178,208],
+        ['Subgroup_Number',208,216],['Coverage_Type',216,217],
+        ['Claim_Number',217,230],['Claim_Line',230,232],
+        ['Date_of_Service_From',232,240],['Date_of_Service_To',240,248],
+        ['Admission_Date',248,256],['Discharge_Date',256,264],
+        ['Provider_NPI',264,274],['Provider_Tax_ID',274,283],
+        ['Provider_Last_Name',283,313],['Provider_First_Name',313,328],
+        ['Provider_Address1',328,358],['Provider_City',358,378],
+        ['Provider_State',378,380],['Provider_Zip',380,389],
+        ['Place_of_Service',389,391],['Type_of_Bill',391,395],
+        ['Procedure_Code',395,403],['Procedure_Modifier1',403,405],
+        ['Procedure_Modifier2',405,407],['Revenue_Code',407,411],
+        ['Diagnosis_Code1',411,419],['Diagnosis_Code2',419,427],
+        ['Diagnosis_Code3',427,435],['Diagnosis_Code4',435,443],
+        ['DRG_Code',443,446],['Units',446,453],
+        ['Billed_Amount',453,464],['Allowed_Amount',464,475],
+        ['Paid_Amount',475,486],['Copay_Amount',486,497],
+        ['Coinsurance_Amount',497,508],['Deductible_Amount',508,519],
+        ['COB_Amount',519,530],['Net_Total',530,541],
+        ['Check_Date',541,549],['Check_Number',549,564],
+        ['Claim_Status',564,565],['Run_Date',565,573],
+        ['Batch_Number',573,581],['Claim_Reference',600,630]
+    ];
+
+    const FLX_DATE_COLS = ['Patient_DOB','Date_of_Service_From','Date_of_Service_To',
+                           'Admission_Date','Discharge_Date','Check_Date','Run_Date'];
+    const FLX_AMT_COLS = ['Billed_Amount','Allowed_Amount','Paid_Amount','Copay_Amount',
+                          'Coinsurance_Amount','Deductible_Amount','COB_Amount','Net_Total'];
+
+    function parseFlx(text) {
+        const lines = text.trim().split('\n').filter(l => l.trim().length > 50);
+        const records = [];
+        for (const line of lines) {
+            const rec = {};
+            for (const [name, start, end] of FLX_LAYOUT) {
+                rec[name] = (line.substring(start, end) || '').trim();
+            }
+            // Format dates
+            for (const dc of FLX_DATE_COLS) {
+                if (rec[dc]) rec[dc] = formatEdiDate(rec[dc]);
+            }
+            // Format amounts (implied 2 decimals)
+            for (const ac of FLX_AMT_COLS) {
+                if (rec[ac]) {
+                    const num = parseFloat(rec[ac]) / 100;
+                    rec[ac] = isNaN(num) ? rec[ac] : num;
+                }
+            }
+            // Units
+            if (rec.Units) {
+                const u = parseFloat(rec.Units) / 100;
+                rec.Units = isNaN(u) ? rec.Units : u;
+            }
+            records.push(rec);
+        }
+        if (!records.length) throw new Error('No records found in FLX file');
+        return records;
+    }
+
+    // ─── DELIMITED PARSER ────────────────────────────────────────────
+    function parseDelimited(text, delimiter) {
+        const lines = text.trim().split('\n');
+        if (lines.length < 2) throw new Error('File has fewer than 2 lines');
+
+        // Smart CSV parsing that handles quoted fields
+        function splitLine(line, delim) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') {
+                    if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+                        current += '"';
+                        i++;
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (ch === delim && !inQuotes) {
+                    result.push(current.trim());
+                    current = '';
+                } else {
+                    current += ch;
+                }
+            }
+            result.push(current.trim());
+            return result;
+        }
+
+        const headers = splitLine(lines[0], delimiter);
+        const records = [];
+        for (let i = 1; i < lines.length; i++) {
+            if (!lines[i].trim()) continue;
+            const vals = splitLine(lines[i], delimiter);
+            const rec = {};
+            for (let j = 0; j < headers.length; j++) {
+                rec[headers[j] || 'Col_' + (j + 1)] = vals[j] || '';
+            }
+            records.push(rec);
+        }
+        return records;
+    }
+
+    // ─── FIXED-WIDTH PARSER ──────────────────────────────────────────
+    function parseFixedWidth(text) {
+        const lines = text.trim().split('\n');
+        if (lines.length < 2) throw new Error('File has fewer than 2 lines');
+
+        const sampleLines = lines.slice(0, 100);
+        const maxLen = Math.max(...sampleLines.map(l => l.length));
+
+        // Find consistent space positions
+        const spacePositions = new Set(Array.from({length: maxLen}, (_, i) => i));
+        for (const line of sampleLines) {
+            const padded = line.padEnd(maxLen);
+            for (let i = 0; i < padded.length; i++) {
+                if (padded[i] !== ' ') spacePositions.delete(i);
+            }
+        }
+
+        const sorted = [...spacePositions].sort((a, b) => a - b);
+        const boundaries = [0];
+        if (sorted.length) {
+            for (let i = 1; i < sorted.length; i++) {
+                if (sorted[i] !== sorted[i - 1] + 1) {
+                    boundaries.push(sorted[i - 1] + 1);
+                }
+            }
+            boundaries.push(sorted[sorted.length - 1] + 1);
+        }
+
+        if (boundaries.length < 2) {
+            return lines.map(l => ({Data: l}));
+        }
+
+        const records = [];
+        for (const line of lines) {
+            const rec = {};
+            for (let i = 0; i < boundaries.length; i++) {
+                const start = boundaries[i];
+                const end = i + 1 < boundaries.length ? boundaries[i + 1] : line.length;
+                rec['Col_' + (i + 1)] = (line.substring(start, end) || '').trim();
+            }
+            records.push(rec);
+        }
+
+        // Use first row as header if it looks like one
+        const firstRow = records[0];
+        const allText = Object.values(firstRow).every(v =>
+            typeof v === 'string' && !/^\d+\.?\d*$/.test(v.replace('-', ''))
+        );
+        if (allText && records.length > 1) {
+            const headers = Object.values(firstRow);
+            const newRecords = [];
+            for (let i = 1; i < records.length; i++) {
+                const rec = {};
+                const vals = Object.values(records[i]);
+                for (let j = 0; j < headers.length; j++) {
+                    rec[headers[j] || 'Col_' + (j + 1)] = vals[j] || '';
+                }
+                newRecords.push(rec);
+            }
+            return newRecords;
+        }
+        return records;
+    }
+
+    // ─── MAIN CONVERSION ─────────────────────────────────────────────
+    function convertToExcel(records, filename, format) {
+        const ws = XLSX.utils.json_to_sheet(records);
+
+        // Style: column widths
+        const cols = Object.keys(records[0] || {});
+        ws['!cols'] = cols.map(c => {
+            let maxW = c.length;
+            for (let i = 0; i < Math.min(records.length, 100); i++) {
+                const val = String(records[i][c] || '');
+                maxW = Math.max(maxW, val.length);
+            }
+            return {wch: Math.min(maxW + 2, 40)};
+        });
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Data');
+
+        // Add summary for EDI 834 and FLX
+        if (format === 'edi_834' || format === 'flx') {
+            const summaryData = [
+                ['File Summary', ''],
+                ['', ''],
+                ['Format', format.toUpperCase().replace('_', ' ')],
+                ['Total Records', records.length],
+                ['Total Columns', cols.length]
+            ];
+
+            if (format === 'edi_834') {
+                const subs = records.filter(r => r.Subscriber_Indicator === 'Y').length;
+                const deps = records.filter(r => r.Subscriber_Indicator === 'N').length;
+                if (subs || deps) {
+                    summaryData.push(['Subscribers', subs]);
+                    summaryData.push(['Dependents', deps]);
+                }
+                const states = new Set(records.map(r => r.State).filter(Boolean));
+                summaryData.push(['Unique States', states.size]);
+            }
+
+            if (format === 'flx') {
+                const types = {};
+                const labels = {P:'Professional',O:'Outpatient',I:'Inpatient',VB:'Capitation'};
+                records.forEach(r => {
+                    const t = r.Claim_Type || 'Unknown';
+                    types[t] = (types[t] || 0) + 1;
+                });
+                for (const [t, count] of Object.entries(types)) {
+                    summaryData.push([(labels[t] || t) + ' Claims (' + t + ')', count]);
+                }
+                for (const ac of FLX_AMT_COLS) {
+                    const total = records.reduce((s, r) => s + (parseFloat(r[ac]) || 0), 0);
+                    if (total) summaryData.push(['Total ' + ac.replace(/_/g, ' '), '$' + total.toFixed(2)]);
+                }
+            }
+
+            const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+            summaryWs['!cols'] = [{wch: 30}, {wch: 25}];
+            XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
+        }
+
+        const outName = filename.replace(/\.(txt|csv|tsv|dat|edi|gz)$/i, '') + '.xlsx';
+        XLSX.writeFile(wb, outName);
+        return { filename: outName, rows: records.length, columns: cols.length, format };
+    }
+
+    // ─── FILE HANDLING ───────────────────────────────────────────────
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+    const result = document.getElementById('result');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length) handleFile(fileInput.files[0]);
+    });
+
+    async function handleFile(file) {
+        status.classList.remove('hidden');
+        result.classList.add('hidden');
+
+        try {
+            let content;
+            let filename = file.name;
+
+            // Read as ArrayBuffer first
+            const buffer = await file.arrayBuffer();
+            let bytes = new Uint8Array(buffer);
+
+            // Handle gzip
+            if (filename.toLowerCase().endsWith('.gz')) {
+                bytes = pako.inflate(bytes);
+                filename = filename.slice(0, -3);
+            }
+
+            // Handle Excel files directly
+            if (filename.toLowerCase().endsWith('.xlsx') || filename.toLowerCase().endsWith('.xls')) {
+                status.classList.add('hidden');
+                result.innerHTML = `
+                    <div class="result-header">
+                        <span class="result-icon">&#8505;</span>
+                        <span class="result-title" style="color:#60a5fa">Already Excel</span>
+                    </div>
+                    <p class="result-stats">This file is already in Excel format.</p>`;
+                result.classList.remove('hidden', 'error');
+                fileInput.value = '';
+                return;
+            }
+
+            // Decode text
+            content = new TextDecoder('utf-8').decode(bytes);
+
+            const fmt = detectFormat(content, filename);
+            let records;
+
+            if (fmt === 'edi_834') {
+                records = parseEdi834(content);
+            } else if (fmt === 'flx') {
+                records = parseFlx(content);
+            } else if (fmt === 'fixed_width') {
+                records = parseFixedWidth(content);
+            } else if (fmt === 'pipe') {
+                records = parseDelimited(content, '|');
+            } else if (fmt === 'tab') {
+                records = parseDelimited(content, '\t');
+            } else if (fmt === 'csv') {
+                records = parseDelimited(content, ',');
+            } else {
+                // Try each delimiter
+                for (const d of [',', '\t', '|']) {
+                    try {
+                        records = parseDelimited(content, d);
+                        if (Object.keys(records[0] || {}).length > 1) break;
+                    } catch (e) { continue; }
+                }
+                if (!records || !records.length) throw new Error('Could not detect format for ' + filename);
+            }
+
+            const stats = convertToExcel(records, filename, fmt);
+
+            status.classList.add('hidden');
+            result.innerHTML = `
+                <div class="result-header">
+                    <span class="result-icon">&#9989;</span>
+                    <span class="result-title">Conversion Complete</span>
+                </div>
+                <div class="result-stats">
+                    Format detected: <span>${stats.format.toUpperCase().replace('_', ' ')}</span><br>
+                    Rows: <span>${stats.rows.toLocaleString()}</span><br>
+                    Columns: <span>${stats.columns}</span>
+                </div>
+                <div style="margin-top:12px;font-size:12px;color:#6b7280">
+                    &#128190; File downloaded automatically
+                </div>`;
+            result.classList.remove('hidden', 'error');
+
+        } catch (err) {
+            status.classList.add('hidden');
+            result.innerHTML = `
+                <div class="result-header">
+                    <span class="result-icon">&#10060;</span>
+                    <span class="result-title">Conversion Failed</span>
+                </div>
+                <p class="error-text">${err.message}</p>`;
+            result.classList.remove('hidden');
+            result.classList.add('error');
+        }
+
+        fileInput.value = '';
+    }
+    </script>
+</body>
+</html>
