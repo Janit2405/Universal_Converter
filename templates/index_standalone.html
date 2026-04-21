@@ -415,10 +415,10 @@
         // 6. Poindexter claims key CSV
         if (firstLine.startsWith('row_number,EMPLOYEE_IDENTIFICATION,EMPLOYEE_LAST_NAME')) return 'poindexter_claims_key';
 
-        // 7. FLX — filename contains 'flx'
-        if (fname.includes('flx')) return 'flx';
-
-        // 8. Highmark CDE Legacy — fixed-width, line length ~2500, no pipe delimiter
+        // 7. Highmark CDE Legacy — fixed-width, line length ~2500, no pipe delimiter
+        // IMPORTANT: Check this BEFORE the FLX filename rule, because Highmark
+        // often names CDE files like "YYYYMMDD_NNNNNNFLX.txt" where 'FLX' means
+        // 'flat/fixed' — NOT the FLX format. Line length is the authoritative signal.
         if (lines.length > 1) {
             const sampleLines = lines.slice(0, Math.min(5, lines.length)).filter(l => l.replace(/\r/g,'').length > 100);
             if (sampleLines.length > 0) {
@@ -431,6 +431,9 @@
                 }
             }
         }
+
+        // 8. FLX — filename contains 'flx' (only reached if not a 2500-byte fixed-width)
+        if (fname.includes('flx')) return 'flx';
 
         // 9. Generic delimited / fixed-width fallbacks
         if (lines.length > 1) {
