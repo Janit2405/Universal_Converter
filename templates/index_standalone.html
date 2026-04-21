@@ -186,7 +186,7 @@
         <div class="drop-zone" id="dropZone">
             <div class="drop-icon">&#128196;</div>
             <div class="drop-text">Drop your file here or click to browse</div>
-            <div class="drop-hint">Supports EDI 834, FLX, CSV, TSV, pipe-delimited, fixed-width, Highmark, and more</div>
+            <div class="drop-hint">Supports EDI 834, FLX, CSV, TSV, pipe-delimited, fixed-width, Highmark STD/CDE, Poindexter, and more</div>
             <input type="file" class="file-input" id="fileInput">
         </div>
 
@@ -226,17 +226,31 @@
         }
     });
 
-    // ─── UTILITY: DATE FORMATTER (CCYYMMDD → MM/DD/YYYY) ─────────────
+    // ─── UTILITY: DATE FORMATTER (CCYYMMDD → MM/DD/YYYY zero-padded) ─
     function formatCcyymmdd(s) {
         if (!s) return '';
         s = s.trim();
-        // Skip obviously invalid dates like 00010101
         if (s === '00010101' || s === '00000000') return '';
         if (s.length === 8 && /^\d{8}$/.test(s)) {
             const yr = s.slice(0, 4);
             const mo = s.slice(4, 6);
             const dy = s.slice(6, 8);
             if (yr === '0001' || yr === '0000') return '';
+            return mo + '/' + dy + '/' + yr;
+        }
+        return s;
+    }
+
+    // ─── UTILITY: DATE FORMATTER (CCYYMMDD → M/D/YYYY non-padded) ────
+    function formatCcyymmddShort(s) {
+        if (!s) return '';
+        s = s.trim();
+        if (s === '00010101' || s === '00000000') return '';
+        if (s.length === 8 && /^\d{8}$/.test(s)) {
+            const yr = s.slice(0, 4);
+            const mo = parseInt(s.slice(4, 6), 10);
+            const dy = parseInt(s.slice(6, 8), 10);
+            if (yr === '0001' || yr === '0000' || mo === 0 || dy === 0) return '';
             return mo + '/' + dy + '/' + yr;
         }
         return s;
@@ -252,13 +266,122 @@
         return s;
     }
 
-    // ─── UTILITY: PARSE AMOUNT STRING (with decimal point) ───────────
+    // ─── UTILITY: PARSE DECIMAL AMOUNT (s12.2 fixed decimal) ─────────
     function parseAmountDecimal(s) {
         if (!s || !s.trim()) return '';
         const trimmed = s.trim();
         const n = parseFloat(trimmed);
         if (isNaN(n)) return trimmed;
         return n;
+    }
+
+    // ─── LOOKUP TABLES ────────────────────────────────────────────────
+    const LOOKUP_PRODUCT = {
+        '0':        'Unknown',
+        '100':      'HMO',
+        '1000':     'VISION',
+        '1100':     'PROFESSIONAL',
+        '1200':     'CARE MANAGEMENT',
+        '1300':     'MEDICAL/SURGICAL - HMO',
+        '1400':     'MEDICAL/SURGICAL - POS',
+        '1500':     'Medical/Surgical - PPO',
+        '200':      'POS',
+        '2000':     'COMP-LIKE',
+        '2100':     'WRAPAROUND',
+        '2200':     'SERVICE - COACHING & SUPPORT',
+        '2300':     'SERVICE - REWARDS PROGRAM',
+        '2400':     'SERVICE - WELLNESS ONLINE',
+        '300':      'PPO',
+        '400':      'FACILITY',
+        '500':      'MAJOR MEDICAL',
+        '600':      'COMPREHENSIVE',
+        '60127205': 'COMMUNITY BLUE MED/SURG HMO',
+        '60127206': 'COMMUNITY BLUE MED/SURG POS',
+        '800':      'PRESCRIPTION DRUG',
+        '900':      'DENTAL',
+        // Handle STD format where PRODUCT field may contain leading zeros
+        '001500':   'Medical/Surgical - PPO',
+        '000100':   'HMO',
+        '000200':   'POS',
+        '000300':   'PPO'
+    };
+
+    const LOOKUP_TOC = {
+        'BK': 'Bulk',
+        'CP': 'Capitation',
+        'CR': 'Cost Rate Adjustment',
+        'DB': 'Drug Rebate',
+        'DR': 'Drug',
+        'I':  'Inpatient',
+        'MM': 'Major Medical',
+        'O':  'Outpatient',
+        'P':  'Professional',
+        'TD': 'Tiered Drug Rebate',
+        'V':  'Vision',
+        'VB': 'Value Based Reimbursement'
+    };
+
+    const LOOKUP_PS = {
+        'A':     'Active',
+        'B':     'Active (Prior Pass)',
+        'C':     'Cancel to Basic',
+        'D':     'Deleted',
+        'H':     'History',
+        'I':     'Correction',
+        'J':     'Adjusted',
+        'M':     'Merged',
+        'P':     'Predetermination',
+        'R':     'Replaced',
+        'S':     'Sent to Another System',
+        'U':     'Inactive (Reversal)',
+        'V':     'Void'
+    };
+
+    const LOOKUP_ENCOUNTER = {
+        '1': 'PREDETERMINATION OF PAYMENT',
+        '2': 'REQUEST FOR PAYMENT',
+        '3': 'CAPITATION / ENCOUNTER'
+    };
+
+    const LOOKUP_RELATIONSHIP = {
+        '01': 'SPOUSE',
+        '03': 'NATURAL CHILD',
+        '04': 'GRANDFATHER OR GRANDMOTHER',
+        '05': 'GRANDSON OR GRANDDAUGHTER',
+        '06': 'EXTENDED STUDENT ELIGIBILITY',
+        '07': 'NEPHEW OR NIECE',
+        '08': 'MILITARY DEPENDENT',
+        '10': 'FOSTER CHILD',
+        '15': 'WARD OF THE COURT',
+        '17': 'STEPSON OR STEPDAUGHTER',
+        '18': 'SELF',
+        '19': 'DEPENDENT',
+        '20': 'EMPLOYEE',
+        '21': 'UNKNOWN',
+        '22': 'HANDICAPPED DEPENDENT',
+        '23': 'SPONSORED DEPENDENT',
+        '24': 'DEPENDENT OF MINOR',
+        '29': 'SIGNIFICANT OTHER',
+        '32': 'MOTHER',
+        '33': 'FATHER',
+        '39': 'ORGAN DONOR',
+        '40': 'CADAVER DONOR',
+        '41': 'INJURED PLAINTIFF',
+        '43': 'CHILD (NO FINANCIAL RESPONSIBILITY)',
+        '95': 'EX-SPOUSE',
+        '98': 'OTHER DEPENDENT',
+        '99': 'PARENT'
+    };
+
+    function lookupProduct(code) {
+        if (!code) return '';
+        const trimmed = code.trim();
+        // Try direct lookup first
+        if (LOOKUP_PRODUCT[trimmed]) return LOOKUP_PRODUCT[trimmed];
+        // Try stripping leading zeros
+        const stripped = String(parseInt(trimmed, 10));
+        if (LOOKUP_PRODUCT[stripped]) return LOOKUP_PRODUCT[stripped];
+        return trimmed;
     }
 
     // ─── FORMAT DETECTION ─────────────────────────────────────────────
@@ -268,8 +391,13 @@
         // 1. Excel passthrough
         if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) return 'excel';
 
-        // 2. CSV/TSV by extension
-        if (fname.endsWith('.csv')) return 'csv';
+        // 2. CSV by extension — check content for Poindexter passthrough
+        if (fname.endsWith('.csv')) {
+            const firstLine = text.split('\n')[0].trim();
+            if (firstLine.startsWith('FIRST_NAME,MIDDLE_NAME,LAST_NAME,BIRTH_DATE,SEX,')) return 'poindexter_eligibility';
+            if (firstLine.startsWith('row_number,EMPLOYEE_IDENTIFICATION,EMPLOYEE_LAST_NAME')) return 'poindexter_claims_key';
+            return 'csv';
+        }
         if (fname.endsWith('.tsv')) return 'tsv';
 
         const firstLine = text.split('\n')[0];
@@ -282,25 +410,29 @@
         if (firstLine.includes('EMPLOYEE_IDENTIFICATION|') &&
             firstLine.includes('EMPLOYEE_AGREEMENT_NUMBER')) return 'highmark_std';
 
-        // 5. FLX — filename contains 'flx'
+        // 5. Poindexter eligibility CSV (no .csv extension)
+        if (firstLine.startsWith('FIRST_NAME,MIDDLE_NAME,LAST_NAME,BIRTH_DATE,SEX,')) return 'poindexter_eligibility';
+        // 6. Poindexter claims key CSV
+        if (firstLine.startsWith('row_number,EMPLOYEE_IDENTIFICATION,EMPLOYEE_LAST_NAME')) return 'poindexter_claims_key';
+
+        // 7. FLX — filename contains 'flx'
         if (fname.includes('flx')) return 'flx';
 
-        // 6. Highmark CDE Legacy — fixed-width, line length 2400-2502, no pipe delimiter
+        // 8. Highmark CDE Legacy — fixed-width, line length ~2500, no pipe delimiter
         if (lines.length > 1) {
-            const sampleLines = lines.slice(0, Math.min(5, lines.length)).filter(l => l.length > 100);
+            const sampleLines = lines.slice(0, Math.min(5, lines.length)).filter(l => l.replace(/\r/g,'').length > 100);
             if (sampleLines.length > 0) {
                 const lens = sampleLines.map(l => l.replace(/\r/g, '').length);
                 const avgLen = lens.reduce((a, b) => a + b, 0) / lens.length;
                 const pipeCount = sampleLines[0].split('|').length - 1;
                 if (avgLen >= 2400 && avgLen <= 2502 && pipeCount < 3) {
-                    // Verify first 17 chars look like an alphanumeric employee ID
                     const first17 = sampleLines[0].substring(0, 17).trim();
                     if (/^[A-Z0-9]+/.test(first17)) return 'highmark_cde';
                 }
             }
         }
 
-        // 7. Generic delimited / fixed-width fallbacks
+        // 9. Generic delimited / fixed-width fallbacks
         if (lines.length > 1) {
             const pipeCounts = lines.slice(0, 10).map(l => (l.match(/\|/g) || []).length);
             if (pipeCounts.every(c => c > 2)) return 'pipe';
@@ -491,14 +623,12 @@
     ]);
 
     function parseHighmarkStd(text) {
-        // Normalize line endings
         const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split('\n');
         if (rawLines.length < 2) throw new Error('Highmark STD file has fewer than 2 lines');
 
         const headerLine = rawLines[0];
         const allHeaders = headerLine.split('|');
 
-        // Find non-FILLER column indices
         const keepIndices = [];
         const keepHeaders = [];
         for (let i = 0; i < allHeaders.length; i++) {
@@ -517,7 +647,6 @@
             for (let k = 0; k < keepIndices.length; k++) {
                 const colName = keepHeaders[k];
                 let val = (vals[keepIndices[k]] || '').trim();
-
                 if (STD_DATE_COLS.has(colName)) {
                     val = formatCcyymmdd(val);
                 } else if (STD_AMT_COLS.has(colName)) {
@@ -529,211 +658,323 @@
         }
 
         if (!records.length) throw new Error('No data records found in Highmark STD file');
-        return records;
+        return { headers: keepHeaders, records };
     }
 
-    function buildHighmarkStdSummary(records) {
-        const totalClaims = records.length;
+    // Build the Claims_Key sheet from STD records (35 columns)
+    function buildStdClaimsKey(records, filename) {
+        const rows = [];
+        let rowNum = 0;
+        for (const r of records) {
+            rowNum++;
+            const productCode = (r['PRODUCT'] || '').trim();
+            const toc = (r['TYPE_OF_CLAIM_IDENTIFIER'] || '').trim();
+            const ps = (r['PROCESS_STATUS_CODE'] || '').trim();
 
-        // Claim types by TYPE_OF_CLAIM_IDENTIFIER
-        const claimTypes = {};
-        const typeLabels = { 'P': 'Professional', 'O': 'Outpatient', 'I': 'Inpatient',
-                             'DR': 'Drug/Rx', 'D': 'Dental' };
-        records.forEach(r => {
-            const t = r['TYPE_OF_CLAIM_IDENTIFIER'] || 'Unknown';
-            claimTypes[t] = (claimTypes[t] || 0) + 1;
-        });
-
-        // Financial totals
-        const amtTotals = {};
-        for (const col of STD_AMT_COLS) {
-            amtTotals[col] = 0;
-        }
-        records.forEach(r => {
-            for (const col of STD_AMT_COLS) {
-                const v = parseFloat(r[col]);
-                if (!isNaN(v)) amtTotals[col] += v;
+            // Format dates as M/D/YYYY (non-padded) for Claims_Key
+            function shortDate(v) {
+                if (!v) return '';
+                // Already formatted as MM/DD/YYYY from raw parse
+                const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+                if (m) {
+                    return parseInt(m[1],10) + '/' + parseInt(m[2],10) + '/' + m[3];
+                }
+                // Could be raw CCYYMMDD if not yet parsed
+                if (/^\d{8}$/.test(v)) return formatCcyymmddShort(v);
+                return v;
             }
-        });
 
-        const rows = [
-            ['HIGHMARK STANDARD PAID CLAIMS — SUMMARY', ''],
-            ['', ''],
-            ['Total Claim Lines', totalClaims],
-            ['', ''],
-            ['CLAIM TYPES', '']
-        ];
-        for (const [type, count] of Object.entries(claimTypes)) {
-            rows.push([(typeLabels[type] || type) + ' (' + type + ')', count]);
-        }
-        rows.push(['', '']);
-        rows.push(['FINANCIAL TOTALS', '']);
-        for (const col of STD_AMT_COLS) {
-            if (amtTotals[col] !== 0) {
-                rows.push([col.replace(/_/g, ' '), amtTotals[col].toFixed(2)]);
-            }
+            // LINE_NUMBER: parse as integer
+            const lineNum = r['LINE_NUMBER'] ? parseInt(r['LINE_NUMBER'], 10) || r['LINE_NUMBER'] : '';
+
+            rows.push({
+                row_number: rowNum,
+                EMPLOYEE_IDENTIFICATION: r['EMPLOYEE_IDENTIFICATION'] || '',
+                EMPLOYEE_LAST_NAME: r['EMPLOYEE_LAST_NAME'] || '',
+                EMPLOYEE_FIRST_NAME: r['EMPLOYEE_FIRST_NAME'] || '',
+                PATIENT_LAST_NAME: r['PATIENT_LAST_NAME'] || '',
+                PATIENT_FIRST_NAME: r['PATIENT_FIRST_NAME'] || '',
+                GROUP_NUMBER: r['GROUP_NUMBER'] || '',
+                PRODUCT: productCode,
+                PRODUCT_DESC: lookupProduct(productCode),
+                CLAIM_NUMBER: r['CLAIM_NUMBER'] || '',
+                TYPE_OF_CLAIM_IDENTIFIER: toc,
+                TYPE_OF_CLAIM_DESC: LOOKUP_TOC[toc] || toc,
+                SOURCE_FILE_IDENTIFIER: r['SOURCE_FILE_IDENTIFIER'] || '',
+                INCURRED_DATE: shortDate(r['INCURRED_DATE'] || ''),
+                FINALIZATION_DATE: shortDate(r['FINALIZATION_DATE'] || ''),
+                PLACE_OF_SERVICE: r['PLACE_OF_SERVICE'] || '',
+                LINE_NUMBER: lineNum,
+                PRIMARY_PROCEDURE_CODE: r['PRIMARY_PROCEDURE_CODE'] || '',
+                BILLING_NAME_OF_PHYSICIAN_PROVIDER: r['BILLING_NAME_OF_PHYSICIAN/PROVIDER'] || '',
+                BILLING_PROVIDER_CITY: r['BILLING_PROVIDER_CITY'] || '',
+                BILLING_PROVIDER_STATE: r['BILLING_PROVIDER_STATE'] || '',
+                TOTAL_SUBMITTED_CHARGES: '',
+                TOTAL_PROVIDER_ALLOW_CHARGE: r['PROVIDER_ALLOW_CHARGE'] !== undefined ? r['PROVIDER_ALLOW_CHARGE'] : '',
+                DEDUCTIBLE_AMOUNT: r['DEDUCTIBLE_AMOUNT'] !== undefined ? r['DEDUCTIBLE_AMOUNT'] : '',
+                COINSURANCE_AMOUNT: r['COINSURANCE_AMOUNT'] !== undefined ? r['COINSURANCE_AMOUNT'] : '',
+                COPAY_AMOUNT: r['COPAY_AMOUNT'] !== undefined ? r['COPAY_AMOUNT'] : '',
+                PROVIDER_APPROVE_TO_PAY_AMOUNT: r['PROVIDER_APPROVED_TO_PAY_AMOUNT'] !== undefined ? r['PROVIDER_APPROVED_TO_PAY_AMOUNT'] : '',
+                TOTAL_AMOUNT_PAID: '',
+                PRIMARY_DIAGNOSIS_CODE: r['PRIMARY_DIAGNOSIS_CODE'] || '',
+                SECONDARY_DIAGNOSIS_2: r['SECONDARY_DIAGNOSIS_(2)'] || '',
+                SECONDARY_DIAGNOSIS_3: r['SECONDARY_DIAGNOSIS_(3)'] || '',
+                SECONDARY_DIAGNOSIS_4: r['SECONDARY_DIAGNOSIS_(4)'] || '',
+                PROCESS_STATUS_CODE: ps,
+                PROCESS_STATUS_DESC: LOOKUP_PS[ps] || ps,
+                source_file: filename
+            });
         }
         return rows;
     }
 
-    // ─── HIGHMARK CDE LEGACY PARSER ───────────────────────────────────
-    // Field layout: [startPos (1-indexed), endPos (1-indexed), name]
-    // Converted to 0-indexed for JS substring: start-1, end
+    // Build Raw_Claims from STD records (non-FILLER fields, dates MM/DD/YYYY)
+    function buildStdRawClaims(records) {
+        return records;
+    }
+
+    // ─── HIGHMARK CDE LEGACY — FULL 187 FIELD LAYOUT ─────────────────
+    // [startPos 1-indexed, endPos 1-indexed, fieldName, isFiller]
+    // isFiller=true → excluded from output (Raw_Claims drops FILLERs)
     const CDE_LAYOUT = [
-        [1,   17,  'EMPLOYEE_IDENTIFICATION'],
-        [18,  37,  'EMPLOYEE_AGREEMENT_NUMBER'],
-        [38,  72,  'EMPLOYEE_LAST_NAME'],
-        [73,  97,  'EMPLOYEE_FIRST_NAME'],
-        [98,  105, 'EMPLOYEE_DATE_OF_BIRTH'],
-        [106, 106, 'EMPLOYEE_GENDER'],
-        [107, 161, 'EMPLOYEE_ADDRESS_LINE_1'],
-        [162, 216, 'EMPLOYEE_ADDRESS_LINE_2'],
-        [217, 246, 'EMPLOYEE_ADDRESS_CITY'],
-        [247, 248, 'EMPLOYEE_ADDRESS_STATE'],
-        [249, 253, 'EMPLOYEE_ZIP_CODE'],
-        [254, 262, 'GROUP_NUMBER'],
-        [263, 268, 'PRODUCT'],
-        [279, 281, 'CONTROL_PLAN_IDENTIFIER'],
-        [282, 284, 'SUBMITTING_PLAN_IDENTIFIER'],
-        [285, 304, 'CLAIM_NUMBER'],
-        [305, 321, 'SCCF_NUMBER'],
-        [322, 323, 'TYPE_OF_CLAIM_IDENTIFIER'],
-        [324, 326, 'CLAIM_ADJUSTMENT_REASON_CODE'],
-        [327, 328, 'ENCOUNTER_CLAIM'],
-        [329, 333, 'SOURCE_FILE_IDENTIFIER'],
-        [334, 368, 'PATIENT_LAST_NAME'],
-        [369, 393, 'PATIENT_FIRST_NAME'],
-        [394, 395, 'PATIENT_STATUS'],
-        [396, 403, 'PATIENT_DATE_OF_BIRTH'],
-        [404, 405, 'PATIENT_RELATIONSHIP_CODE'],
-        [406, 406, 'PATIENT_GENDER_CODE'],
-        [407, 414, 'DATE_CLAIM_RECEIVED'],
-        [415, 422, 'INCURRED_DATE'],
-        [423, 430, 'DISCHARGE_DATE'],
-        [431, 438, 'FINALIZATION_DATE'],
-        [439, 440, 'PROCESS_STATUS_CODE'],
-        [441, 443, 'PLACE_OF_SERVICE'],
-        [444, 448, 'LINE_NUMBER'],
-        [449, 454, 'TYPE_OF_SERVICE'],
-        [455, 459, 'NUMBER_OF_UNITS_OLD'],
-        [460, 461, 'ER_INDICATOR'],
-        [486, 492, 'PRIMARY_PROCEDURE_CODE'],
-        [493, 493, 'TYPE_OF_PROCEDURE_CODE_INDICATOR'],
-        [494, 495, 'PRIMARY_PROCEDURE_CODE_MODIFIER'],
-        [496, 497, 'SECONDARY_PROCEDURE_CODE_MODIFIER'],
-        [498, 504, 'PROCEDURE_CODE_2'],
-        [505, 511, 'PROCEDURE_CODE_3'],
-        [512, 516, 'TOTAL_NUMBER_OF_SERVICES'],
-        [517, 517, 'CLASSIFICATION_OF_PROVIDER'],
-        [518, 537, 'BILLING_PROVIDER_IDENTIFIER'],
-        [538, 539, 'BILLING_PROVIDER_IDENTIFIER_TYPE'],
-        [540, 624, 'BILLING_NAME_OF_PROVIDER'],
-        [625, 679, 'BILLING_PROVIDER_ADDRESS_1'],
-        [680, 734, 'BILLING_PROVIDER_ADDRESS_2'],
-        [735, 764, 'BILLING_PROVIDER_CITY'],
-        [765, 766, 'BILLING_PROVIDER_STATE'],
-        [767, 771, 'BILLING_PROVIDER_ZIP_CODE'],
-        [772, 774, 'BILLING_PROVIDER_SPECIALTY_CODE'],
-        [775, 775, 'PAID_IN_OR_OUT_OF_NETWORK'],
-        [776, 791, 'PRIMARY_CARE_PHYSICIAN_IDENTIFIER'],
-        [792, 793, 'PRIMARY_CARE_PHYS_ID_TYPE'],
-        [794, 809, 'PERFORMING_PROVIDER_IDENTIFIER'],
-        [810, 811, 'PERFORMING_PROVIDER_IDENTIFIER_TYPE'],
-        [812, 841, 'MEDICAL_RECORD_NUMBER'],
-        [842, 844, 'TYPE_OF_REIMBURSEMENT'],
-        [845, 845, 'PAYMENT_RECIPIENT_CODE'],
-        [846, 848, 'DRG_CODE'],
-        [849, 849, 'TYPE_OF_ADMISSION_INDICATOR'],
-        [910, 924, 'PROVIDER_ALLOW_CHARGE'],
-        [940, 954, 'DEDUCTIBLE_AMOUNT'],
-        [955, 969, 'COINSURANCE_AMOUNT'],
-        [970, 984, 'COPAY_AMOUNT'],
-        [985, 999, 'AMOUNT_EXCEEDING_MAXIMUM'],
-        [1000,1014,'EMPLOYEE_PENALTY'],
-        [1015,1029,'OTHER_EMPLOYEE_LIABILITY'],
-        [1045,1059,'OTHER_COB_AMOUNT'],
-        [1060,1074,'SALES_TAX'],
-        [1075,1089,'SERVICE_ADDITIONAL_PAYMENT'],
-        [1090,1104,'PROVIDER_APPROVED_TO_PAY'],
-        [1105,1119,'PER_CLAIM_ADMIN_FEE'],
-        [1180,1187,'WAREHOUSE_LOAD_DATE'],
-        [1223,1241,'NATIONAL_DRUG_CODE'],
-        [1242,1242,'DISPENSE_AS_WRITTEN_CODE'],
-        [1243,1243,'DRUG_FORMULARY_INDICATOR'],
-        [1244,1244,'DRUG_MAINTENANCE_INDICATOR'],
-        [1245,1274,'DRUG_PRODUCT_NAME'],
-        [1275,1282,'DATE_PRESCRIPTION_WRITTEN'],
-        [1298,1298,'PHARMACY_PROVIDER_FEE_CLASS_CODE'],
-        [1315,1328,'DRUG_QUANTITY_DISPENSED'],
-        [1329,1332,'PRESCRIBED_DAYS_SUPPLIED'],
-        [1333,1347,'DRUG_DISPENSING_FEE'],
-        [1348,1351,'PRESCRIPTION_REFILL_NUMBER'],
-        [1352,1370,'AVERAGE_WHOLESALE_UNIT_PRICE'],
-        [1374,1374,'CLAIM_DRUG_COMPOUND_CODE'],
-        [1390,1401,'INGREDIENT_COST_PAID'],
-        [1402,1411,'DRUG_STRENGTH_MEASUREMENT'],
-        [1412,1413,'DRUG_UNIT_MEASURE_CODE'],
-        [1414,1428,'DRUG_PRESCRIPTION_IDENTIFIER'],
-        [1429,1439,'DRUG_PRIOR_AUTH_NUMBER'],
-        [1440,1444,'REVENUE_CODE'],
-        [1840,1845,'CLIENT_NUMBER'],
-        [1846,1854,'NUMBER_OF_UNITS'],
-        [1855,1874,'NPI_BILLING_PROVIDER'],
-        [1875,1894,'NPI_PERFORMING_PROVIDER'],
-        [1970,1976,'PRIMARY_DIAGNOSIS_CODE'],
-        [1977,1983,'SECONDARY_DIAGNOSIS_2'],
-        [1984,1990,'SECONDARY_DIAGNOSIS_3'],
-        [1991,1997,'SECONDARY_DIAGNOSIS_4'],
-        [1998,1998,'TYPE_OF_DIAGNOSIS_CODE_INDICATOR'],
-        [1999,2001,'FACILITY_TYPE_OF_BILL'],
-        [2002,2021,'NATIONAL_ORDERING_PROVIDER_PHARMACY'],
-        [2100,2107,'CLAIM_LINE_SERVICE_END_DATE'],
-        [2140,2140,'CLAIM_DRUG_BRAND_GENERIC_CODE'],
-        [2141,2170,'DEPARTMENT_CODE'],
-        [2171,2180,'EMPLOYEE_LOCATION_CODE'],
-        [2371,2372,'OTHER_PARTY_LIABILITY_CODE'],
-        [2373,2375,'COVERAGE_CATEGORY_CODE'],
-        [2376,2392,'CLIENT_ASSIGN_ID']
+        // Page 3
+        [1,   17,  'EMPLOYEE_IDENTIFICATION', false],
+        [18,  37,  'EMPLOYEE_AGREEMENT_NUMBER', false],
+        [38,  72,  'EMPLOYEE_LAST_NAME', false],
+        [73,  97,  'EMPLOYEE_FIRST_NAME', false],
+        [98,  105, 'EMPLOYEE_DATE_OF_BIRTH', false],
+        [106, 106, 'EMPLOYEE_GENDER', false],
+        [107, 161, 'EMPLOYEE_ADDRESS_LINE_1', false],
+        [162, 216, 'EMPLOYEE_ADDRESS_LINE_2', false],
+        [217, 246, 'EMPLOYEE_ADDRESS_CITY', false],
+        [247, 248, 'EMPLOYEE_ADDRESS_STATE', false],
+        [249, 253, 'EMPLOYEE_ZIP_CODE', false],
+        [254, 262, 'GROUP_NUMBER', false],
+        [263, 268, 'PRODUCT', false],
+        [269, 278, 'FILLER_269', true],
+        [279, 281, 'CONTROL_PLAN_IDENTIFIER', false],
+        [282, 284, 'SUBMITTING_PLAN_IDENTIFIER', false],
+        [285, 304, 'CLAIM_NUMBER', false],
+        [305, 321, 'SCCF_NUMBER', false],
+        [322, 323, 'TYPE_OF_CLAIM_IDENTIFIER', false],
+        [324, 326, 'CLAIM_ADJUSTMENT_REASON_CODE', false],
+        [327, 328, 'ENCOUNTER_CLAIM', false],
+        [329, 333, 'SOURCE_FILE_IDENTIFIER', false],
+        [334, 368, 'PATIENT_LAST_NAME', false],
+        [369, 393, 'PATIENT_FIRST_NAME', false],
+        [394, 395, 'PATIENT_STATUS', false],
+        [396, 403, 'PATIENT_DATE_OF_BIRTH', false],
+        [404, 405, 'PATIENT_RELATIONSHIP_CODE', false],
+        [406, 406, 'PATIENT_GENDER_CODE', false],
+        [407, 414, 'DATE_CLAIM_RECEIVED', false],
+        [415, 422, 'INCURRED_DATE', false],
+        [423, 430, 'DISCHARGE_DATE', false],
+        [431, 438, 'FINALIZATION_DATE', false],
+        [439, 440, 'PROCESS_STATUS_CODE', false],
+        [441, 443, 'PLACE_OF_SERVICE', false],
+        [444, 448, 'LINE_NUMBER', false],
+        [449, 454, 'TYPE_OF_SERVICE', false],
+        [455, 459, 'NUMBER_OF_UNITS_LEGACY', false],
+        [460, 461, 'ER_INDICATOR', false],
+        [462, 485, 'FILLER_462', true],
+        [486, 492, 'PRIMARY_PROCEDURE_CODE', false],
+        [493, 493, 'TYPE_OF_PROCEDURE_CODE_INDICATOR', false],
+        [494, 495, 'PRIMARY_PROCEDURE_CODE_MODIFIER', false],
+        [496, 497, 'SECONDARY_PROCEDURE_CODE_MODIFIER', false],
+        [498, 504, 'PROCEDURE_CODE_2', false],
+        [505, 511, 'PROCEDURE_CODE_3', false],
+        [512, 516, 'TOTAL_NUMBER_OF_SERVICES', false],
+        [517, 517, 'CLASSIFICATION_OF_PROVIDER', false],
+        [518, 537, 'BILLING_PROVIDER_IDENTIFIER', false],
+        [538, 539, 'BILLING_PROVIDER_IDENTIFIER_TYPE', false],
+        [540, 624, 'BILLING_NAME_OF_PROVIDER', false],
+        [625, 679, 'BILLING_PROVIDER_ADDRESS_1', false],
+        [680, 734, 'BILLING_PROVIDER_ADDRESS_2', false],
+        [735, 764, 'BILLING_PROVIDER_CITY', false],
+        [765, 766, 'BILLING_PROVIDER_STATE', false],
+        [767, 771, 'BILLING_PROVIDER_ZIP_CODE', false],
+        [772, 774, 'BILLING_PROVIDER_SPECIALTY_CODE', false],
+        [775, 775, 'PAID_IN_OR_OUT_OF_NETWORK', false],
+        [776, 791, 'PRIMARY_CARE_PHYSICIAN_IDENTIFIER', false],
+        [792, 793, 'PRIMARY_CARE_PHYS_IDENTIFIER_TYPE', false],
+        [794, 809, 'PERFORMING_PROVIDER_IDENTIFIER', false],
+        [810, 811, 'PERFORMING_PROVIDER_IDENTIFIER_TYPE', false],
+        [812, 841, 'MEDICAL_RECORD_NUMBER', false],
+        [842, 844, 'TYPE_OF_REIMBURSEMENT', false],
+        [845, 845, 'PAYMENT_RECIPIENT_CODE', false],
+        [846, 848, 'DRG_CODE', false],
+        [849, 849, 'TYPE_OF_ADMISSION_INDICATOR', false],
+        // Page 6 — financial amounts
+        [850, 864, 'TOTAL_SUBMITTED_CHARGES', false],
+        [865, 879, 'ANCILLARY_SUBMITTED_CHARGES', false],
+        [880, 894, 'TOTAL_COVERED_CHARGES', false],
+        [895, 909, 'ANCILLARY_COVERED_CHARGES', false],
+        [910, 924, 'TOTAL_PROVIDER_ALLOW_CHARGE', false],
+        [925, 939, 'ANCILLARY_PROVIDER_ALLOW_CHARGE', false],
+        [940, 954, 'DEDUCTIBLE_AMOUNT', false],
+        [955, 969, 'COINSURANCE_AMOUNT', false],
+        [970, 984, 'COPAY_AMOUNT', false],
+        [985, 999, 'AMOUNT_EXCEEDING_MAXIMUM', false],
+        [1000,1014,'EMPLOYEE_PENALTY', false],
+        // Page 7
+        [1015,1029,'OTHER_EMPLOYEE_LIABILITY', false],
+        [1030,1044,'MEDICARE_SAVINGS', false],
+        [1045,1059,'OTHER_COB_AMOUNT', false],
+        [1060,1074,'SALES_TAX', false],
+        [1075,1089,'SURCHARGE_AMOUNT', false],
+        [1090,1104,'PROVIDER_APPROVED_TO_PAY', false],
+        [1105,1119,'PER_CLAIM_ADMIN_FEE', false],
+        [1120,1134,'PROVIDER_AS_CUSTOMER_AMOUNT', false],
+        [1135,1149,'BILLING_EXCEPTION_FEE_ADJUSTMENT', false],
+        [1150,1164,'TOTAL_AMOUNT_PAID', false],
+        [1165,1179,'CONTRACTUAL_SAVINGS', false],
+        [1180,1187,'BILL_DATE', false],
+        [1188,1207,'INVOICE_NUMBER', false],
+        [1208,1219,'INVOICE_SEQUENCE_NUMBER', false],
+        [1220,1222,'BILLING_STATUS', false],
+        [1223,1241,'NATIONAL_DRUG_CODE', false],
+        [1242,1242,'DISPENSE_AS_WRITTEN_CODE', false],
+        [1243,1243,'DRUG_FORMULARY_INDICATOR', false],
+        // Page 8
+        [1244,1244,'DRUG_MAINTENANCE_INDICATOR', false],
+        [1245,1274,'DRUG_PRODUCT_NAME', false],
+        [1275,1282,'DATE_PRESCRIPTION_WRITTEN', false],
+        [1283,1297,'FILLER_1283', true],
+        [1298,1298,'PHARMACY_PROVIDER_FEE_CLASS_CODE', false],
+        [1299,1299,'GENERIC_PRODUCT_CODE', false],
+        [1300,1314,'SUBMITTED_CHARGE_CONTRACTUAL_SAVINGS', false],
+        [1315,1328,'DRUG_QUANTITY_DISPENSED', false],
+        [1329,1332,'PRESCRIBED_DAYS_SUPPLIED', false],
+        [1333,1347,'DRUG_DISPENSING_FEE', false],
+        [1348,1351,'PRESCRIPTION_REFILL_NUMBER', false],
+        [1352,1370,'AVERAGE_WHOLESALE_UNIT_PRICE', false],
+        [1371,1373,'FILLER_1371', true],
+        [1374,1374,'CLAIM_DRUG_COMPOUND_CODE', false],
+        [1375,1389,'FILLER_1375', true],
+        [1390,1401,'INGREDIENT_COST_PAID', false],
+        [1402,1411,'DRUG_STRENGTH_MEASUREMENT', false],
+        [1412,1413,'DRUG_UNIT_MEASURE_CODE', false],
+        [1414,1428,'DRUG_PRESCRIPTION_IDENTIFIER', false],
+        [1429,1439,'DRUG_PRIOR_AUTHORIZATION_NUMBER', false],
+        // Page 9 — Revenue codes 1-20 (5 chars each, 1440-1539)
+        [1440,1444,'REVENUE_CODE_1', false],
+        [1445,1449,'REVENUE_CODE_2', false],
+        [1450,1454,'REVENUE_CODE_3', false],
+        [1455,1459,'REVENUE_CODE_4', false],
+        [1460,1464,'REVENUE_CODE_5', false],
+        [1465,1469,'REVENUE_CODE_6', false],
+        [1470,1474,'REVENUE_CODE_7', false],
+        [1475,1479,'REVENUE_CODE_8', false],
+        [1480,1484,'REVENUE_CODE_9', false],
+        [1485,1489,'REVENUE_CODE_10', false],
+        [1490,1494,'REVENUE_CODE_11', false],
+        [1495,1499,'REVENUE_CODE_12', false],
+        [1500,1504,'REVENUE_CODE_13', false],
+        [1505,1509,'REVENUE_CODE_14', false],
+        [1510,1514,'REVENUE_CODE_15', false],
+        [1515,1519,'REVENUE_CODE_16', false],
+        [1520,1524,'REVENUE_CODE_17', false],
+        [1525,1529,'REVENUE_CODE_18', false],
+        [1530,1534,'REVENUE_CODE_19', false],
+        [1535,1539,'REVENUE_CODE_20', false],
+        // Submitted charges for revenue codes 1-20 (15 chars each, 1540-1839)
+        [1540,1554,'SUBMITTED_CHARGES_REVENUE_CODE_1', false],
+        [1555,1569,'SUBMITTED_CHARGES_REVENUE_CODE_2', false],
+        [1570,1584,'SUBMITTED_CHARGES_REVENUE_CODE_3', false],
+        [1585,1599,'SUBMITTED_CHARGES_REVENUE_CODE_4', false],
+        [1600,1614,'SUBMITTED_CHARGES_REVENUE_CODE_5', false],
+        [1615,1629,'SUBMITTED_CHARGES_REVENUE_CODE_6', false],
+        [1630,1644,'SUBMITTED_CHARGES_REVENUE_CODE_7', false],
+        [1645,1659,'SUBMITTED_CHARGES_REVENUE_CODE_8', false],
+        [1660,1674,'SUBMITTED_CHARGES_REVENUE_CODE_9', false],
+        [1675,1689,'SUBMITTED_CHARGES_REVENUE_CODE_10', false],
+        [1690,1704,'SUBMITTED_CHARGES_REVENUE_CODE_11', false],
+        [1705,1719,'SUBMITTED_CHARGES_REVENUE_CODE_12', false],
+        [1720,1734,'SUBMITTED_CHARGES_REVENUE_CODE_13', false],
+        [1735,1749,'SUBMITTED_CHARGES_REVENUE_CODE_14', false],
+        [1750,1764,'SUBMITTED_CHARGES_REVENUE_CODE_15', false],
+        [1765,1779,'SUBMITTED_CHARGES_REVENUE_CODE_16', false],
+        [1780,1794,'SUBMITTED_CHARGES_REVENUE_CODE_17', false],
+        [1795,1809,'SUBMITTED_CHARGES_REVENUE_CODE_18', false],
+        [1810,1824,'SUBMITTED_CHARGES_REVENUE_CODE_19', false],
+        [1825,1839,'SUBMITTED_CHARGES_REVENUE_CODE_20', false],
+        // Page 10
+        [1840,1845,'CLIENT_NUMBER', false],
+        [1846,1854,'NUMBER_OF_UNITS', false],
+        [1855,1874,'NPI_BILLING_PROVIDER', false],
+        [1875,1894,'NPI_PERFORMING_PROVIDER', false],
+        [1895,1909,'FILLER_1895', true],  // Complementary Medicare Coinsurance (obsolete)
+        [1910,1924,'FILLER_1910', true],  // Complementary Medicare Deductible (obsolete)
+        [1925,1939,'FILLER_1925', true],  // Complementary Medicare Psychiatric (obsolete)
+        [1940,1954,'FILLER_1940', true],  // Complementary Special Group (obsolete)
+        [1955,1969,'FILLER_1955', true],
+        // Page 11
+        [1970,1976,'PRIMARY_DIAGNOSIS_CODE', false],
+        [1977,1983,'SECONDARY_DIAGNOSIS_2', false],
+        [1984,1990,'SECONDARY_DIAGNOSIS_3', false],
+        [1991,1997,'SECONDARY_DIAGNOSIS_4', false],
+        [1998,1998,'TYPE_OF_DIAGNOSIS_CODE_INDICATOR', false],
+        [1999,2001,'FACILITY_TYPE_OF_BILL', false],
+        [2002,2021,'NATIONAL_ORDERING_PROVIDER_PHARMACY', false],
+        [2022,2051,'CLIENT_COMMUNICATION_VALUE', false],
+        [2052,2066,'NETWORK_QUALITY_FEE', false],
+        [2067,2096,'PAYROLL_STATUS_AND_LOCATION', false],
+        [2097,2116,'FILLER_2097', true],  // Internal use only
+        [2117,2500,'FILLER_2117', true]   // Filler to end of record
     ];
 
     const CDE_DATE_COLS = new Set([
         'EMPLOYEE_DATE_OF_BIRTH', 'PATIENT_DATE_OF_BIRTH', 'DATE_CLAIM_RECEIVED',
-        'INCURRED_DATE', 'DISCHARGE_DATE', 'FINALIZATION_DATE', 'WAREHOUSE_LOAD_DATE',
-        'DATE_PRESCRIPTION_WRITTEN', 'CLAIM_LINE_SERVICE_END_DATE'
+        'INCURRED_DATE', 'DISCHARGE_DATE', 'FINALIZATION_DATE', 'BILL_DATE',
+        'DATE_PRESCRIPTION_WRITTEN'
     ]);
 
     const CDE_AMT_COLS = new Set([
-        'PROVIDER_ALLOW_CHARGE', 'DEDUCTIBLE_AMOUNT', 'COINSURANCE_AMOUNT', 'COPAY_AMOUNT',
-        'AMOUNT_EXCEEDING_MAXIMUM', 'EMPLOYEE_PENALTY', 'OTHER_EMPLOYEE_LIABILITY',
-        'OTHER_COB_AMOUNT', 'SALES_TAX', 'SERVICE_ADDITIONAL_PAYMENT',
-        'PROVIDER_APPROVED_TO_PAY', 'PER_CLAIM_ADMIN_FEE',
-        'DRUG_DISPENSING_FEE', 'INGREDIENT_COST_PAID', 'AVERAGE_WHOLESALE_UNIT_PRICE'
+        'TOTAL_SUBMITTED_CHARGES', 'ANCILLARY_SUBMITTED_CHARGES', 'TOTAL_COVERED_CHARGES',
+        'ANCILLARY_COVERED_CHARGES', 'TOTAL_PROVIDER_ALLOW_CHARGE', 'ANCILLARY_PROVIDER_ALLOW_CHARGE',
+        'DEDUCTIBLE_AMOUNT', 'COINSURANCE_AMOUNT', 'COPAY_AMOUNT', 'AMOUNT_EXCEEDING_MAXIMUM',
+        'EMPLOYEE_PENALTY', 'OTHER_EMPLOYEE_LIABILITY', 'MEDICARE_SAVINGS', 'OTHER_COB_AMOUNT',
+        'SALES_TAX', 'SURCHARGE_AMOUNT', 'PROVIDER_APPROVED_TO_PAY', 'PER_CLAIM_ADMIN_FEE',
+        'PROVIDER_AS_CUSTOMER_AMOUNT', 'BILLING_EXCEPTION_FEE_ADJUSTMENT', 'TOTAL_AMOUNT_PAID',
+        'CONTRACTUAL_SAVINGS', 'SUBMITTED_CHARGE_CONTRACTUAL_SAVINGS', 'DRUG_DISPENSING_FEE',
+        'AVERAGE_WHOLESALE_UNIT_PRICE', 'INGREDIENT_COST_PAID', 'NETWORK_QUALITY_FEE',
+        'SUBMITTED_CHARGES_REVENUE_CODE_1', 'SUBMITTED_CHARGES_REVENUE_CODE_2',
+        'SUBMITTED_CHARGES_REVENUE_CODE_3', 'SUBMITTED_CHARGES_REVENUE_CODE_4',
+        'SUBMITTED_CHARGES_REVENUE_CODE_5', 'SUBMITTED_CHARGES_REVENUE_CODE_6',
+        'SUBMITTED_CHARGES_REVENUE_CODE_7', 'SUBMITTED_CHARGES_REVENUE_CODE_8',
+        'SUBMITTED_CHARGES_REVENUE_CODE_9', 'SUBMITTED_CHARGES_REVENUE_CODE_10',
+        'SUBMITTED_CHARGES_REVENUE_CODE_11', 'SUBMITTED_CHARGES_REVENUE_CODE_12',
+        'SUBMITTED_CHARGES_REVENUE_CODE_13', 'SUBMITTED_CHARGES_REVENUE_CODE_14',
+        'SUBMITTED_CHARGES_REVENUE_CODE_15', 'SUBMITTED_CHARGES_REVENUE_CODE_16',
+        'SUBMITTED_CHARGES_REVENUE_CODE_17', 'SUBMITTED_CHARGES_REVENUE_CODE_18',
+        'SUBMITTED_CHARGES_REVENUE_CODE_19', 'SUBMITTED_CHARGES_REVENUE_CODE_20'
     ]);
 
+    // CDE_LAYOUT non-filler entries only
+    const CDE_LAYOUT_DATA = CDE_LAYOUT.filter(([,,, isFiller]) => !isFiller);
+
     function parseHighmarkCde(text) {
-        // Normalize line endings (handle both CRLF and LF)
         const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 
         // Filter: skip empty lines and TRAILER records
         const dataLines = rawLines.filter(line => {
-            if (!line.trim()) return false;
-            if (line.toUpperCase().includes('TRAILER')) return false;
-            // Must be at least 2400 chars to be a valid CDE record
-            if (line.length < 2400) return false;
+            const clean = line.replace(/\r/g, '');
+            if (!clean.trim()) return false;
+            if (clean.toUpperCase().includes('TRAILER')) return false;
+            if (clean.length < 2400) return false;
             return true;
         });
 
         if (!dataLines.length) throw new Error('No valid CDE Legacy records found (minimum 2400 chars per line required)');
 
-        // First pass: extract all fields, track which columns have any non-empty value
+        // Parse all records using full CDE_LAYOUT_DATA
         const allRecords = [];
-        const colHasData = new Array(CDE_LAYOUT.length).fill(false);
+        const colHasData = new Array(CDE_LAYOUT_DATA.length).fill(false);
 
         for (const line of dataLines) {
             const rec = {};
-            for (let fi = 0; fi < CDE_LAYOUT.length; fi++) {
-                const [startPos, endPos, colName] = CDE_LAYOUT[fi];
-                // Convert 1-indexed to 0-indexed
+            for (let fi = 0; fi < CDE_LAYOUT_DATA.length; fi++) {
+                const [startPos, endPos, colName] = CDE_LAYOUT_DATA[fi];
                 const s0 = startPos - 1;
                 const e0 = endPos;
                 let val = (line.substring(s0, e0) || '').trim();
@@ -745,68 +986,122 @@
                 }
 
                 rec[colName] = val;
-                if (val !== '' && val !== 0) colHasData[fi] = true;
+                if (val !== '' && val !== 0 && val !== '') colHasData[fi] = true;
             }
             allRecords.push(rec);
         }
 
-        // Second pass: remove columns that have no data across all records
-        const keepCols = CDE_LAYOUT.filter((_, fi) => colHasData[fi]).map(([, , name]) => name);
-        const keepSet = new Set(keepCols);
+        // Keep only columns with data (trim empty/filler columns)
+        const keepCols = CDE_LAYOUT_DATA
+            .filter((_, fi) => colHasData[fi])
+            .map(([,,name]) => name);
 
         const records = allRecords.map(rec => {
             const filtered = {};
-            for (const col of keepCols) {
-                if (keepSet.has(col)) filtered[col] = rec[col];
-            }
+            for (const col of keepCols) filtered[col] = rec[col];
             return filtered;
         });
 
-        return records;
+        return { allRecords, keepCols, records };
     }
 
-    function buildCdeSummary(records) {
-        const totalClaims = records.length;
+    // Build Claims_Key from CDE records (35 columns)
+    function buildCdeClaimsKey(allRecords, filename) {
+        const rows = [];
+        let rowNum = 0;
+        for (const r of allRecords) {
+            rowNum++;
+            const productCode = (r['PRODUCT'] || '').trim();
+            const toc = (r['TYPE_OF_CLAIM_IDENTIFIER'] || '').trim();
+            const ps = (r['PROCESS_STATUS_CODE'] || '').trim();
 
-        const claimTypes = {};
-        const typeLabels = { 'P': 'Professional', 'O': 'Outpatient', 'I': 'Inpatient',
-                             'DR': 'Drug/Rx', 'D': 'Dental', 'M': 'Medical' };
-        records.forEach(r => {
-            const t = (r['TYPE_OF_CLAIM_IDENTIFIER'] || 'Unknown').trim() || 'Unknown';
-            claimTypes[t] = (claimTypes[t] || 0) + 1;
-        });
-
-        const amtTotals = {};
-        for (const col of CDE_AMT_COLS) {
-            amtTotals[col] = 0;
-        }
-        records.forEach(r => {
-            for (const col of CDE_AMT_COLS) {
-                if (r[col] !== undefined) {
-                    const v = parseFloat(r[col]);
-                    if (!isNaN(v)) amtTotals[col] += v;
-                }
+            function shortDate(v) {
+                if (!v) return '';
+                const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+                if (m) return parseInt(m[1],10) + '/' + parseInt(m[2],10) + '/' + m[3];
+                if (/^\d{8}$/.test(v)) return formatCcyymmddShort(v);
+                return v;
             }
-        });
 
-        const rows = [
-            ['HIGHMARK CDE LEGACY — SUMMARY', ''],
-            ['', ''],
-            ['Total Claim Lines', totalClaims],
-            ['', ''],
-            ['CLAIM TYPES', '']
-        ];
-        for (const [type, count] of Object.entries(claimTypes)) {
-            rows.push([(typeLabels[type] || type) + ' (' + type + ')', count]);
-        }
-        rows.push(['', '']);
-        rows.push(['FINANCIAL TOTALS', '']);
-        for (const col of CDE_AMT_COLS) {
-            if (amtTotals[col] !== 0) {
-                rows.push([col.replace(/_/g, ' '), amtTotals[col].toFixed(2)]);
-            }
+            const lineNum = r['LINE_NUMBER'] ? parseInt(r['LINE_NUMBER'], 10) || r['LINE_NUMBER'] : '';
+
+            rows.push({
+                row_number: rowNum,
+                EMPLOYEE_IDENTIFICATION: r['EMPLOYEE_IDENTIFICATION'] || '',
+                EMPLOYEE_LAST_NAME: r['EMPLOYEE_LAST_NAME'] || '',
+                EMPLOYEE_FIRST_NAME: r['EMPLOYEE_FIRST_NAME'] || '',
+                PATIENT_LAST_NAME: r['PATIENT_LAST_NAME'] || '',
+                PATIENT_FIRST_NAME: r['PATIENT_FIRST_NAME'] || '',
+                GROUP_NUMBER: r['GROUP_NUMBER'] || '',
+                PRODUCT: productCode,
+                PRODUCT_DESC: lookupProduct(productCode),
+                CLAIM_NUMBER: r['CLAIM_NUMBER'] || '',
+                TYPE_OF_CLAIM_IDENTIFIER: toc,
+                TYPE_OF_CLAIM_DESC: LOOKUP_TOC[toc] || toc,
+                SOURCE_FILE_IDENTIFIER: r['SOURCE_FILE_IDENTIFIER'] || '',
+                INCURRED_DATE: shortDate(r['INCURRED_DATE'] || ''),
+                FINALIZATION_DATE: shortDate(r['FINALIZATION_DATE'] || ''),
+                PLACE_OF_SERVICE: r['PLACE_OF_SERVICE'] || '',
+                LINE_NUMBER: lineNum,
+                PRIMARY_PROCEDURE_CODE: r['PRIMARY_PROCEDURE_CODE'] || '',
+                BILLING_NAME_OF_PHYSICIAN_PROVIDER: r['BILLING_NAME_OF_PROVIDER'] || '',
+                BILLING_PROVIDER_CITY: r['BILLING_PROVIDER_CITY'] || '',
+                BILLING_PROVIDER_STATE: r['BILLING_PROVIDER_STATE'] || '',
+                TOTAL_SUBMITTED_CHARGES: r['TOTAL_SUBMITTED_CHARGES'] !== undefined ? r['TOTAL_SUBMITTED_CHARGES'] : '',
+                TOTAL_PROVIDER_ALLOW_CHARGE: r['TOTAL_PROVIDER_ALLOW_CHARGE'] !== undefined ? r['TOTAL_PROVIDER_ALLOW_CHARGE'] : '',
+                DEDUCTIBLE_AMOUNT: r['DEDUCTIBLE_AMOUNT'] !== undefined ? r['DEDUCTIBLE_AMOUNT'] : '',
+                COINSURANCE_AMOUNT: r['COINSURANCE_AMOUNT'] !== undefined ? r['COINSURANCE_AMOUNT'] : '',
+                COPAY_AMOUNT: r['COPAY_AMOUNT'] !== undefined ? r['COPAY_AMOUNT'] : '',
+                PROVIDER_APPROVE_TO_PAY_AMOUNT: r['PROVIDER_APPROVED_TO_PAY'] !== undefined ? r['PROVIDER_APPROVED_TO_PAY'] : '',
+                TOTAL_AMOUNT_PAID: r['TOTAL_AMOUNT_PAID'] !== undefined ? r['TOTAL_AMOUNT_PAID'] : '',
+                PRIMARY_DIAGNOSIS_CODE: r['PRIMARY_DIAGNOSIS_CODE'] || '',
+                SECONDARY_DIAGNOSIS_2: r['SECONDARY_DIAGNOSIS_2'] || '',
+                SECONDARY_DIAGNOSIS_3: r['SECONDARY_DIAGNOSIS_3'] || '',
+                SECONDARY_DIAGNOSIS_4: r['SECONDARY_DIAGNOSIS_4'] || '',
+                PROCESS_STATUS_CODE: ps,
+                PROCESS_STATUS_DESC: LOOKUP_PS[ps] || ps,
+                source_file: filename
+            });
         }
         return rows;
+    }
+
+    // ─── POINDEXTER CSV PASS-THROUGH ─────────────────────────────────
+    function parsePoindexterCsv(text) {
+        const lines = text.trim().split('\n');
+        if (lines.length < 1) throw new Error('Empty CSV file');
+
+        function splitLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') {
+                    if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+                        current += '"'; i++;
+                    } else { inQuotes = !inQuotes; }
+                } else if (ch === ',' && !inQuotes) {
+                    result.push(current);
+                    current = '';
+                } else { current += ch; }
+            }
+            result.push(current);
+            return result;
+        }
+
+        const headers = splitLine(lines[0].replace(/\r/g, ''));
+        const records = [];
+        for (let i = 1; i < lines.length; i++) {
+            if (!lines[i].trim()) continue;
+            const vals = splitLine(lines[i].replace(/\r/g, ''));
+            const rec = {};
+            for (let j = 0; j < headers.length; j++) {
+                rec[headers[j] || 'Col_' + (j + 1)] = vals[j] || '';
+            }
+            records.push(rec);
+        }
+        return records;
     }
 
     // ─── DELIMITED PARSER ────────────────────────────────────────────
@@ -822,17 +1117,11 @@
                 const ch = line[i];
                 if (ch === '"') {
                     if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
-                        current += '"';
-                        i++;
-                    } else {
-                        inQuotes = !inQuotes;
-                    }
+                        current += '"'; i++;
+                    } else { inQuotes = !inQuotes; }
                 } else if (ch === delim && !inQuotes) {
-                    result.push(current.trim());
-                    current = '';
-                } else {
-                    current += ch;
-                }
+                    result.push(current.trim()); current = '';
+                } else { current += ch; }
             }
             result.push(current.trim());
             return result;
@@ -879,9 +1168,7 @@
             boundaries.push(sorted[sorted.length - 1] + 1);
         }
 
-        if (boundaries.length < 2) {
-            return lines.map(l => ({Data: l}));
-        }
+        if (boundaries.length < 2) return lines.map(l => ({Data: l}));
 
         const records = [];
         for (const line of lines) {
@@ -914,10 +1201,64 @@
         return records;
     }
 
-    // ─── MAIN CONVERSION ─────────────────────────────────────────────
-    function convertToExcel(records, filename, format, summaryData) {
-        const ws = XLSX.utils.json_to_sheet(records);
+    // ─── AUTO-COLUMN-WIDTH HELPER ─────────────────────────────────────
+    function autoColWidths(ws, records, headers) {
+        ws['!cols'] = headers.map(c => {
+            let maxW = c.length;
+            for (let i = 0; i < Math.min(records.length, 100); i++) {
+                const val = String(records[i][c] !== undefined ? records[i][c] : '');
+                maxW = Math.max(maxW, val.length);
+            }
+            return {wch: Math.min(maxW + 2, 50)};
+        });
+    }
 
+    // ─── HIGHMARK 2-SHEET EXCEL BUILDER ──────────────────────────────
+    function buildHighmarkWorkbook(claimsKeyRows, rawRows, outName) {
+        const wb = XLSX.utils.book_new();
+
+        // Sheet 1: Claims_Key
+        const ws1 = XLSX.utils.json_to_sheet(claimsKeyRows, {
+            header: [
+                'row_number','EMPLOYEE_IDENTIFICATION','EMPLOYEE_LAST_NAME','EMPLOYEE_FIRST_NAME',
+                'PATIENT_LAST_NAME','PATIENT_FIRST_NAME','GROUP_NUMBER','PRODUCT','PRODUCT_DESC',
+                'CLAIM_NUMBER','TYPE_OF_CLAIM_IDENTIFIER','TYPE_OF_CLAIM_DESC','SOURCE_FILE_IDENTIFIER',
+                'INCURRED_DATE','FINALIZATION_DATE','PLACE_OF_SERVICE','LINE_NUMBER',
+                'PRIMARY_PROCEDURE_CODE','BILLING_NAME_OF_PHYSICIAN_PROVIDER',
+                'BILLING_PROVIDER_CITY','BILLING_PROVIDER_STATE','TOTAL_SUBMITTED_CHARGES',
+                'TOTAL_PROVIDER_ALLOW_CHARGE','DEDUCTIBLE_AMOUNT','COINSURANCE_AMOUNT',
+                'COPAY_AMOUNT','PROVIDER_APPROVE_TO_PAY_AMOUNT','TOTAL_AMOUNT_PAID',
+                'PRIMARY_DIAGNOSIS_CODE','SECONDARY_DIAGNOSIS_2','SECONDARY_DIAGNOSIS_3',
+                'SECONDARY_DIAGNOSIS_4','PROCESS_STATUS_CODE','PROCESS_STATUS_DESC','source_file'
+            ]
+        });
+        autoColWidths(ws1, claimsKeyRows, [
+            'row_number','EMPLOYEE_IDENTIFICATION','EMPLOYEE_LAST_NAME','EMPLOYEE_FIRST_NAME',
+            'PATIENT_LAST_NAME','PATIENT_FIRST_NAME','GROUP_NUMBER','PRODUCT','PRODUCT_DESC',
+            'CLAIM_NUMBER','TYPE_OF_CLAIM_IDENTIFIER','TYPE_OF_CLAIM_DESC','SOURCE_FILE_IDENTIFIER',
+            'INCURRED_DATE','FINALIZATION_DATE','PLACE_OF_SERVICE','LINE_NUMBER',
+            'PRIMARY_PROCEDURE_CODE','BILLING_NAME_OF_PHYSICIAN_PROVIDER',
+            'BILLING_PROVIDER_CITY','BILLING_PROVIDER_STATE','TOTAL_SUBMITTED_CHARGES',
+            'TOTAL_PROVIDER_ALLOW_CHARGE','DEDUCTIBLE_AMOUNT','COINSURANCE_AMOUNT',
+            'COPAY_AMOUNT','PROVIDER_APPROVE_TO_PAY_AMOUNT','TOTAL_AMOUNT_PAID',
+            'PRIMARY_DIAGNOSIS_CODE','SECONDARY_DIAGNOSIS_2','SECONDARY_DIAGNOSIS_3',
+            'SECONDARY_DIAGNOSIS_4','PROCESS_STATUS_CODE','PROCESS_STATUS_DESC','source_file'
+        ]);
+        XLSX.utils.book_append_sheet(wb, ws1, 'Claims_Key');
+
+        // Sheet 2: Raw_Claims
+        const rawHeaders = rawRows.length ? Object.keys(rawRows[0]) : [];
+        const ws2 = XLSX.utils.json_to_sheet(rawRows);
+        autoColWidths(ws2, rawRows, rawHeaders);
+        XLSX.utils.book_append_sheet(wb, ws2, 'Raw_Claims');
+
+        XLSX.writeFile(wb, outName);
+        return { filename: outName, claimsKeyRows: claimsKeyRows.length, rawRows: rawRows.length };
+    }
+
+    // ─── MAIN CONVERSION ─────────────────────────────────────────────
+    function convertToExcel(records, filename, format, summaryData, sheetName) {
+        const ws = XLSX.utils.json_to_sheet(records);
         const cols = Object.keys(records[0] || {});
         ws['!cols'] = cols.map(c => {
             let maxW = c.length;
@@ -929,20 +1270,16 @@
         });
 
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Data');
+        XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Data');
 
-        // Build summary sheet depending on format
         let summaryRows = summaryData || null;
-
         if (!summaryRows && (format === 'edi_834' || format === 'flx')) {
             summaryRows = [
-                ['File Summary', ''],
-                ['', ''],
+                ['File Summary', ''], ['', ''],
                 ['Format', format.toUpperCase().replace('_', ' ')],
                 ['Total Records', records.length],
                 ['Total Columns', cols.length]
             ];
-
             if (format === 'edi_834') {
                 const subs = records.filter(r => r.Subscriber_Indicator === 'Y').length;
                 const deps = records.filter(r => r.Subscriber_Indicator === 'N').length;
@@ -953,17 +1290,10 @@
                 const states = new Set(records.map(r => r.State).filter(Boolean));
                 summaryRows.push(['Unique States', states.size]);
             }
-
             if (format === 'flx') {
                 const types = {};
-                const labels = {P:'Professional',O:'Outpatient',I:'Inpatient',VB:'Capitation'};
-                records.forEach(r => {
-                    const t = r.Claim_Type || 'Unknown';
-                    types[t] = (types[t] || 0) + 1;
-                });
-                for (const [t, count] of Object.entries(types)) {
-                    summaryRows.push([(labels[t] || t) + ' Claims (' + t + ')', count]);
-                }
+                records.forEach(r => { const t = r.Claim_Type || 'Unknown'; types[t] = (types[t] || 0) + 1; });
+                for (const [t, count] of Object.entries(types)) summaryRows.push([t + ' Claims', count]);
                 for (const ac of FLX_AMT_COLS) {
                     const total = records.reduce((s, r) => s + (parseFloat(r[ac]) || 0), 0);
                     if (total) summaryRows.push(['Total ' + ac.replace(/_/g, ' '), '$' + total.toFixed(2)]);
@@ -1015,8 +1345,6 @@
 
         try {
             let filename = file.name;
-
-            // Read as ArrayBuffer first
             const buffer = await file.arrayBuffer();
             let bytes = new Uint8Array(buffer);
 
@@ -1031,18 +1359,12 @@
             // Handle Excel files directly
             if (filename.toLowerCase().endsWith('.xlsx') || filename.toLowerCase().endsWith('.xls')) {
                 statusEl.classList.add('hidden');
-                resultEl.innerHTML = `
-                    <div class="result-header">
-                        <span class="result-icon">&#8505;</span>
-                        <span class="result-title" style="color:#60a5fa">Already Excel</span>
-                    </div>
-                    <p class="result-stats">This file is already in Excel format.</p>`;
+                resultEl.innerHTML = `<div class="result-header"><span class="result-icon">&#8505;</span><span class="result-title" style="color:#60a5fa">Already Excel</span></div><p class="result-stats">This file is already in Excel format.</p>`;
                 resultEl.classList.remove('hidden', 'error');
                 fileInput.value = '';
                 return;
             }
 
-            // Decode text
             setStatus('Decoding text...');
             await new Promise(r => setTimeout(r, 10));
             const content = new TextDecoder('utf-8').decode(bytes);
@@ -1051,88 +1373,119 @@
             await new Promise(r => setTimeout(r, 10));
             const fmt = detectFormat(content, filename);
 
-            let records;
-            let summaryData = null;
+            let statsInfo = null;
+            const outBase = filename.replace(/\.(txt|csv|tsv|dat|edi|gz)$/i, '') + '.xlsx';
 
-            if (fmt === 'edi_834') {
-                setStatus('Parsing EDI 834...');
+            // ── Highmark STD_PD → 2-sheet output ──────────────────────
+            if (fmt === 'highmark_std') {
+                setStatus('Parsing Highmark STD Paid Claims...');
                 await new Promise(r => setTimeout(r, 10));
-                records = parseEdi834(content);
+                const { records } = parseHighmarkStd(content);
 
-            } else if (fmt === 'flx') {
-                setStatus('Parsing FLX fixed-width...');
+                setStatus('Building Claims_Key and Raw_Claims sheets...');
                 await new Promise(r => setTimeout(r, 10));
-                records = parseFlx(content);
 
-            } else if (fmt === 'highmark_std') {
-                setStatus('Parsing Highmark Standard Paid Claims...');
-                await new Promise(r => setTimeout(r, 10));
-                records = parseHighmarkStd(content);
-                setStatus('Building summary...');
-                await new Promise(r => setTimeout(r, 10));
-                summaryData = buildHighmarkStdSummary(records);
+                const claimsKey = buildStdClaimsKey(records, filename);
+                const rawClaims = buildStdRawClaims(records);
 
+                const stats = buildHighmarkWorkbook(claimsKey, rawClaims, outBase);
+                statsInfo = { format: 'HIGHMARK STD', claimsKey: claimsKey.length, raw: rawClaims.length, sheets: 2 };
+
+            // ── Highmark CDE Legacy → 2-sheet output ──────────────────
             } else if (fmt === 'highmark_cde') {
                 setStatus('Parsing Highmark CDE Legacy (fixed-width 2500)...');
                 await new Promise(r => setTimeout(r, 10));
-                records = parseHighmarkCde(content);
-                setStatus('Building summary...');
-                await new Promise(r => setTimeout(r, 10));
-                summaryData = buildCdeSummary(records);
+                const { allRecords, records: rawRecords } = parseHighmarkCde(content);
 
-            } else if (fmt === 'fixed_width') {
-                setStatus('Parsing fixed-width...');
+                setStatus('Building Claims_Key and Raw_Claims sheets...');
                 await new Promise(r => setTimeout(r, 10));
-                records = parseFixedWidth(content);
 
-            } else if (fmt === 'pipe') {
-                setStatus('Parsing pipe-delimited...');
+                const claimsKey = buildCdeClaimsKey(allRecords, filename);
+                const rawClaims = rawRecords;
+
+                const stats = buildHighmarkWorkbook(claimsKey, rawClaims, outBase);
+                statsInfo = { format: 'HIGHMARK CDE', claimsKey: claimsKey.length, raw: rawClaims.length, sheets: 2 };
+
+            // ── Poindexter Eligibility CSV → single sheet ──────────────
+            } else if (fmt === 'poindexter_eligibility') {
+                setStatus('Parsing Poindexter Eligibility CSV...');
                 await new Promise(r => setTimeout(r, 10));
-                records = parseDelimited(content, '|');
+                const records = parsePoindexterCsv(content);
+                convertToExcel(records, filename, fmt, null, 'Eligibility');
+                statsInfo = { format: 'POINDEXTER ELIGIBILITY', claimsKey: records.length, raw: 0, sheets: 1 };
 
-            } else if (fmt === 'tab') {
-                setStatus('Parsing tab-delimited...');
+            // ── Poindexter Claims Key CSV → single sheet ───────────────
+            } else if (fmt === 'poindexter_claims_key') {
+                setStatus('Parsing Poindexter Claims Key CSV...');
                 await new Promise(r => setTimeout(r, 10));
-                records = parseDelimited(content, '\t');
+                const records = parsePoindexterCsv(content);
+                convertToExcel(records, filename, fmt, null, 'Claims_Key');
+                statsInfo = { format: 'POINDEXTER CLAIMS KEY', claimsKey: records.length, raw: 0, sheets: 1 };
 
-            } else if (fmt === 'csv') {
-                setStatus('Parsing CSV...');
+            // ── EDI 834 ────────────────────────────────────────────────
+            } else if (fmt === 'edi_834') {
+                setStatus('Parsing EDI 834...');
                 await new Promise(r => setTimeout(r, 10));
-                records = parseDelimited(content, ',');
+                const records = parseEdi834(content);
+                convertToExcel(records, filename, fmt, null, 'Data');
+                statsInfo = { format: 'EDI 834', claimsKey: records.length, raw: 0, sheets: 2 };
 
+            // ── FLX ───────────────────────────────────────────────────
+            } else if (fmt === 'flx') {
+                setStatus('Parsing FLX fixed-width...');
+                await new Promise(r => setTimeout(r, 10));
+                const records = parseFlx(content);
+                convertToExcel(records, filename, fmt, null, 'Data');
+                statsInfo = { format: 'FLX', claimsKey: records.length, raw: 0, sheets: 2 };
+
+            // ── Generic delimited / fixed-width ───────────────────────
             } else {
-                // Try each delimiter as fallback
-                for (const d of [',', '\t', '|']) {
-                    try {
-                        records = parseDelimited(content, d);
-                        if (Object.keys(records[0] || {}).length > 1) break;
-                    } catch (e) { continue; }
+                let records;
+                if (fmt === 'fixed_width') {
+                    setStatus('Parsing fixed-width...');
+                    await new Promise(r => setTimeout(r, 10));
+                    records = parseFixedWidth(content);
+                } else if (fmt === 'pipe') {
+                    setStatus('Parsing pipe-delimited...');
+                    await new Promise(r => setTimeout(r, 10));
+                    records = parseDelimited(content, '|');
+                } else if (fmt === 'tab' || fmt === 'tsv') {
+                    setStatus('Parsing tab-delimited...');
+                    await new Promise(r => setTimeout(r, 10));
+                    records = parseDelimited(content, '\t');
+                } else if (fmt === 'csv') {
+                    setStatus('Parsing CSV...');
+                    await new Promise(r => setTimeout(r, 10));
+                    records = parseDelimited(content, ',');
+                } else {
+                    for (const d of [',', '\t', '|']) {
+                        try {
+                            records = parseDelimited(content, d);
+                            if (Object.keys(records[0] || {}).length > 1) break;
+                        } catch (e) { continue; }
+                    }
+                    if (!records || !records.length) {
+                        throw new Error('Could not detect file format for: ' + filename + '\nTried CSV, TSV, pipe-delimited, and fixed-width parsers.');
+                    }
                 }
-                if (!records || !records.length) {
-                    throw new Error('Could not detect file format for: ' + filename +
-                        '\nTried CSV, TSV, pipe-delimited, and fixed-width parsers.');
-                }
+                convertToExcel(records, filename, fmt, null, 'Data');
+                statsInfo = { format: fmt.toUpperCase().replace(/_/g,' '), claimsKey: records.length, raw: 0, sheets: 1 };
             }
 
-            setStatus('Building Excel workbook (' + records.length.toLocaleString() + ' rows)...');
-            await new Promise(r => setTimeout(r, 10));
-            const stats = convertToExcel(records, filename, fmt, summaryData);
-
             statusEl.classList.add('hidden');
-            const fmtLabel = fmt.replace('highmark_std', 'HIGHMARK STD')
-                               .replace('highmark_cde', 'HIGHMARK CDE')
-                               .replace('edi_834', 'EDI 834')
-                               .replace('fixed_width', 'FIXED WIDTH')
-                               .toUpperCase().replace(/_/g, ' ');
+            const sheetsStr = statsInfo.sheets > 1 ?
+                (statsInfo.sheets === 2 && statsInfo.raw > 0 ?
+                    `<br>Sheets: <span>Claims_Key (${statsInfo.claimsKey} rows) + Raw_Claims (${statsInfo.raw} rows)</span>` :
+                    `<br>Sheets: <span>${statsInfo.sheets}</span>`) :
+                '';
             resultEl.innerHTML = `
                 <div class="result-header">
                     <span class="result-icon">&#9989;</span>
                     <span class="result-title">Conversion Complete</span>
                 </div>
                 <div class="result-stats">
-                    Format detected: <span>${fmtLabel}</span><br>
-                    Rows: <span>${stats.rows.toLocaleString()}</span><br>
-                    Columns: <span>${stats.columns}</span>${summaryData ? '<br>Sheets: <span>Data + Summary</span>' : ''}
+                    Format detected: <span>${statsInfo.format}</span><br>
+                    Rows: <span>${statsInfo.claimsKey.toLocaleString()}</span>${sheetsStr}
                 </div>
                 <div style="margin-top:12px;font-size:12px;color:#6b7280">
                     &#128190; File downloaded automatically
