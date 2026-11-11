@@ -6,10 +6,14 @@
     <title>Universal Excel Converter</title>
     <script src="./xlsx.min.js"></script>
     <script src="./pako.min.js"></script>
+    <script src="./fflate.min.js"></script>
     <script>
     // Fallback to CDN if local files don't load
     if (typeof XLSX === 'undefined') {
         document.write('<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"><\/scr'+'ipt>');
+    }
+    if (typeof fflate === 'undefined') {
+        document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"><\/scr'+'ipt>');
     }
     if (typeof pako === 'undefined') {
         document.write('<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"><\/scr'+'ipt>');
@@ -963,7 +967,7 @@
         const dataLines = rawLines.filter(line => {
             const clean = line.replace(/\r/g, '');
             if (!clean.trim()) return false;
-            if (clean.toUpperCase().includes('TRAILER')) return false;
+            if (CDE_TRAILER_RE.test(clean)) return false;
             if (clean.length < 2400) return false;
             return true;
         });
@@ -1259,6 +1263,204 @@
         return { filename: outName, claimsKeyRows: claimsKeyRows.length, rawRows: rawRows.length };
     }
 
+    // ─── LARGE-FILE STREAMING CDE PIPELINE ───────────────────────────
+    // Reads the decompressed bytes line by line and writes the XLSX as a
+    // streamed zip (fflate), so memory stays flat regardless of file size.
+    // Output matches the in-memory path: Claims_Key (35 cols) + Raw_Claims.
+    const CK_HEADERS = [
+        'row_number','EMPLOYEE_IDENTIFICATION','EMPLOYEE_LAST_NAME','EMPLOYEE_FIRST_NAME',
+        'PATIENT_LAST_NAME','PATIENT_FIRST_NAME','GROUP_NUMBER','PRODUCT','PRODUCT_DESC',
+        'CLAIM_NUMBER','TYPE_OF_CLAIM_IDENTIFIER','TYPE_OF_CLAIM_DESC','SOURCE_FILE_IDENTIFIER',
+        'INCURRED_DATE','FINALIZATION_DATE','PLACE_OF_SERVICE','LINE_NUMBER',
+        'PRIMARY_PROCEDURE_CODE','BILLING_NAME_OF_PHYSICIAN_PROVIDER',
+        'BILLING_PROVIDER_CITY','BILLING_PROVIDER_STATE','TOTAL_SUBMITTED_CHARGES',
+        'TOTAL_PROVIDER_ALLOW_CHARGE','DEDUCTIBLE_AMOUNT','COINSURANCE_AMOUNT',
+        'COPAY_AMOUNT','PROVIDER_APPROVE_TO_PAY_AMOUNT','TOTAL_AMOUNT_PAID',
+        'PRIMARY_DIAGNOSIS_CODE','SECONDARY_DIAGNOSIS_2','SECONDARY_DIAGNOSIS_3',
+        'SECONDARY_DIAGNOSIS_4','PROCESS_STATUS_CODE','PROCESS_STATUS_DESC','source_file'
+    ];
+    // Trailer record: "<total paid s12.2> <record count> <bill date> TRAILER" (≈42 chars).
+    // Match the shape, not the word — addresses like "E PINE ST TRAILER 90" are real claims.
+    const CDE_TRAILER_RE = /^\s*-?\d{9,13}\.\d{2}\s+\d{6,12}\s+\d{8}\s+TRAILER\s*$/;
+    const EXCEL_MAX_DATA_ROWS = 1048575; // 1,048,576 minus header row
+    const yieldUI = () => new Promise(r => setTimeout(r, 0));
+
+    function parseCdeLine(line) {
+        const rec = {};
+        for (let fi = 0; fi < CDE_LAYOUT_DATA.length; fi++) {
+            const [startPos, endPos, colName] = CDE_LAYOUT_DATA[fi];
+            let val = (line.substring(startPos - 1, endPos) || '').trim();
+            if (CDE_DATE_COLS.has(colName)) val = formatCcyymmdd(val);
+            else if (CDE_AMT_COLS.has(colName)) val = parseAmountDecimal(val);
+            rec[colName] = val;
+        }
+        return rec;
+    }
+
+    // Iterate valid CDE data lines straight from the byte array.
+    async function forEachCdeLine(bytes, cb, onProgress) {
+        const dec = new TextDecoder('utf-8');
+        const n = bytes.length;
+        let start = 0, idx = 0, lastYield = 0;
+        while (start < n) {
+            let end = bytes.indexOf(10, start);
+            if (end === -1) end = n;
+            let stop = end;
+            if (stop > start && bytes[stop - 1] === 13) stop--;
+            if (stop - start >= 2400) {
+                const line = dec.decode(bytes.subarray(start, stop));
+                if (!CDE_TRAILER_RE.test(line)) { cb(line, idx); idx++; }
+            }
+            start = end + 1;
+            if (idx - lastYield >= 5000) {
+                lastYield = idx;
+                if (onProgress) onProgress(start / n);
+                await yieldUI();
+            }
+        }
+        return idx;
+    }
+
+    function xmlEsc(s) {
+        return String(s)
+            .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function xmlCell(v) {
+        if (v === '' || v === null || v === undefined) return '<c/>';
+        if (typeof v === 'number' && isFinite(v)) return '<c><v>' + v + '</v></c>';
+        return '<c t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+    }
+    function headerRowXml(headers) {
+        return '<row>' + headers.map(h => '<c t="inlineStr" s="1"><is><t>' + xmlEsc(h) + '</t></is></c>').join('') + '</row>';
+    }
+    function colsXml(widths) {
+        return '<cols>' + widths.map((w, i) =>
+            '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols>';
+    }
+    const SHEET_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+    const SHEET_PANE = '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>';
+
+    // Streamed sheet writer: buffers XML text, flushes compressed chunks.
+    function makeSheetStream(zip, path) {
+        const file = new fflate.ZipDeflate(path, { level: 3 });
+        zip.add(file);
+        const enc = new TextEncoder();
+        let buf = [], len = 0;
+        return {
+            write(s) { buf.push(s); len += s.length; if (len > 1 << 20) this.flush(); },
+            flush() { if (buf.length) { file.push(enc.encode(buf.join(''))); buf = []; len = 0; } },
+            end(s) { if (s) buf.push(s); file.push(enc.encode(buf.join('')), true); buf = []; len = 0; }
+        };
+    }
+    function addStaticFile(zip, path, text) {
+        const f = new fflate.ZipDeflate(path, { level: 6 });
+        zip.add(f);
+        f.push(new TextEncoder().encode(text), true);
+    }
+
+    async function convertCdeStreaming(bytes, filename, outName) {
+        // Pass 1 — count rows, find populated Raw columns, sample widths
+        setStatus('Scanning CDE records...');
+        const colHasData = new Array(CDE_LAYOUT_DATA.length).fill(false);
+        const ckWidths = CK_HEADERS.map(h => h.length);
+        const sampleRaw = [];
+        const total = await forEachCdeLine(bytes, (line, i) => {
+            const rec = parseCdeLine(line);
+            for (let fi = 0; fi < CDE_LAYOUT_DATA.length; fi++) {
+                if (colHasData[fi]) continue;
+                const v = rec[CDE_LAYOUT_DATA[fi][2]];
+                if (v !== '' && v !== 0) colHasData[fi] = true;
+            }
+            if (i < 100) {
+                sampleRaw.push(rec);
+                const ck = buildCdeClaimsKey([rec], filename)[0];
+                CK_HEADERS.forEach((h, k) => { ckWidths[k] = Math.max(ckWidths[k], String(ck[h] ?? '').length); });
+            }
+        }, p => setStatus('Scanning CDE records... ' + Math.round(p * 100) + '%'));
+        if (!total) throw new Error('No valid CDE Legacy records found (minimum 2400 chars per line required)');
+
+        const keepCols = CDE_LAYOUT_DATA.filter((_, fi) => colHasData[fi]).map(([,,name]) => name);
+        const rawWidths = keepCols.map(c => Math.min(Math.max(c.length,
+            ...sampleRaw.map(r => String(r[c] ?? '').length)) + 2, 50));
+        const ckW = ckWidths.map(w => Math.min(w + 2, 50));
+
+        // Split into multiple sheets only if a sheet would exceed Excel's row cap
+        const parts = Math.ceil(total / EXCEL_MAX_DATA_ROWS);
+        const sheetNames = [];
+        for (let p = 0; p < parts; p++) sheetNames.push(parts > 1 ? 'Claims_Key_' + (p + 1) : 'Claims_Key');
+        for (let p = 0; p < parts; p++) sheetNames.push(parts > 1 ? 'Raw_Claims_' + (p + 1) : 'Raw_Claims');
+
+        const chunks = [];
+        let zipErr = null;
+        const zip = new fflate.Zip((err, data) => { if (err) zipErr = err; else if (data) chunks.push(data); });
+
+        addStaticFile(zip, '[Content_Types].xml',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+            '<Default Extension="xml" ContentType="application/xml"/>' +
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+            '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+            sheetNames.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') +
+            '</Types>');
+        addStaticFile(zip, '_rels/.rels',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+        addStaticFile(zip, 'xl/workbook.xml',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+            sheetNames.map((nm, i) => '<sheet name="' + nm + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') +
+            '</sheets></workbook>');
+        addStaticFile(zip, 'xl/_rels/workbook.xml.rels',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            sheetNames.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join('') +
+            '<Relationship Id="rId' + (sheetNames.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+        addStaticFile(zip, 'xl/styles.xml',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+            '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
+            '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+            '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+            '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+            '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+            '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>' +
+            '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>');
+
+        // Write one sheet family (Claims_Key or Raw_Claims) across its parts
+        async function writeFamily(sheetOffset, headers, widths, rowFn, label) {
+            for (let p = 0; p < parts; p++) {
+                const s = makeSheetStream(zip, 'xl/worksheets/sheet' + (sheetOffset + p + 1) + '.xml');
+                s.write(SHEET_HEAD + SHEET_PANE + colsXml(widths) + '<sheetData>' + headerRowXml(headers));
+                const lo = p * EXCEL_MAX_DATA_ROWS, hi = lo + EXCEL_MAX_DATA_ROWS;
+                await forEachCdeLine(bytes, (line, i) => {
+                    if (i < lo || i >= hi) return;
+                    s.write('<row>' + rowFn(parseCdeLine(line), i).map(xmlCell).join('') + '</row>');
+                }, pr => setStatus('Writing ' + label + '... ' + Math.round(pr * 100) + '%'));
+                s.end('</sheetData></worksheet>');
+                if (zipErr) throw zipErr;
+            }
+        }
+
+        await writeFamily(0, CK_HEADERS, ckW, (rec, i) => {
+            const ck = buildCdeClaimsKey([rec], filename)[0];
+            ck.row_number = i + 1;
+            return CK_HEADERS.map(h => ck[h]);
+        }, 'Claims_Key');
+        await writeFamily(parts, keepCols, rawWidths, rec => keepCols.map(c => rec[c]), 'Raw_Claims');
+
+        zip.end();
+        if (zipErr) throw zipErr;
+
+        setStatus('Saving Excel file...');
+        const blob = new Blob(chunks, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = outName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
+        return { total, rawCols: keepCols.length, parts };
+    }
+
     // ─── MAIN CONVERSION ─────────────────────────────────────────────
     function convertToExcel(records, filename, format, summaryData, sheetName) {
         const ws = XLSX.utils.json_to_sheet(records);
@@ -1355,7 +1557,7 @@
             if (filename.toLowerCase().endsWith('.gz')) {
                 setStatus('Decompressing gzip...');
                 await new Promise(r => setTimeout(r, 10));
-                bytes = pako.inflate(bytes);
+                bytes = (typeof fflate !== 'undefined') ? fflate.gunzipSync(bytes) : pako.inflate(bytes);
                 filename = filename.slice(0, -3);
             }
 
@@ -1363,6 +1565,31 @@
             if (filename.toLowerCase().endsWith('.xlsx') || filename.toLowerCase().endsWith('.xls')) {
                 statusEl.classList.add('hidden');
                 resultEl.innerHTML = `<div class="result-header"><span class="result-icon">&#8505;</span><span class="result-title" style="color:#60a5fa">Already Excel</span></div><p class="result-stats">This file is already in Excel format.</p>`;
+                resultEl.classList.remove('hidden', 'error');
+                fileInput.value = '';
+                return;
+            }
+
+            // Detect format from the first ~64KB so huge files never become one giant string
+            const headText = new TextDecoder('utf-8').decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
+            const headFmt = detectFormat(headText, filename);
+            if (headFmt === 'highmark_cde') {
+                const outCde = filename.replace(/\.(txt|csv|tsv|dat|edi|gz)$/i, '') + '.xlsx';
+                const r = await convertCdeStreaming(bytes, filename, outCde);
+                statusEl.classList.add('hidden');
+                resultEl.innerHTML = `
+                <div class="result-header">
+                    <span class="result-icon">&#9989;</span>
+                    <span class="result-title">Conversion Complete</span>
+                </div>
+                <div class="result-stats">
+                    Format detected: <span>HIGHMARK CDE</span><br>
+                    Rows: <span>${r.total.toLocaleString()}</span><br>
+                    Sheets: <span>Claims_Key (${r.total.toLocaleString()} rows) + Raw_Claims (${r.total.toLocaleString()} rows, ${r.rawCols} cols)${r.parts > 1 ? ' — split into ' + r.parts + ' parts each (Excel row limit)' : ''}</span>
+                </div>
+                <div style="margin-top:12px;font-size:12px;color:#6b7280">
+                    &#128190; File downloaded automatically
+                </div>`;
                 resultEl.classList.remove('hidden', 'error');
                 fileInput.value = '';
                 return;
